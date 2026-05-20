@@ -51,7 +51,7 @@ def build_services(settings: Settings, bot: Bot) -> ServiceContainer:
     task_order = TaskOrderService(sheets, llm=llm, soul=soul, bot=bot)
     dialogue = DialogueService(settings, llm, memory, soul)
     image_prompt = ImagePromptService()
-    image = ChadImageService(settings, prompt_service=image_prompt)
+    image = ChadImageService(settings, prompt_service=image_prompt, llm=llm)
     image_intent = ImageIntentScorer(settings, llm)
     intent_scorer = GroupIntentScorer(settings, llm, memory)
     secretary_module = SecretaryModule(task_order, soul)

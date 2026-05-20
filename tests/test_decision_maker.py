@@ -57,7 +57,7 @@ async def test_decision_maker_fallback_on_low_confidence() -> None:
     decision = await service.decide(
         MessageEnvelope(user_id=1, chat_id=2, text="сделай картинку", images=[]),
     )
-    assert decision.module == ModuleName.CHAT
+    assert decision.module == ModuleName.GENERATION
     assert decision.fallback_used is True
 
 
@@ -69,4 +69,15 @@ async def test_decision_maker_fallback_routes_reminder_to_secretary() -> None:
         MessageEnvelope(user_id=1, chat_id=2, text="через минуту напомни Кате закрыть дверь", images=[]),
     )
     assert decision.module == ModuleName.SECRETARY
+    assert decision.fallback_used is True
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_overrides_chat_to_generation_on_explicit_photo_request() -> None:
+    settings = make_settings()
+    service = DecisionMakerService(settings, FakeLLM('{"module":"chat","confidence":0.93,"reason":"smalltalk"}'), SoulService(settings))
+    decision = await service.decide(
+        MessageEnvelope(user_id=1, chat_id=2, text="Сайна, сгенерируй свою фотку для аватарки", images=[]),
+    )
+    assert decision.module == ModuleName.GENERATION
     assert decision.fallback_used is True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from bot.config import Settings
@@ -83,6 +84,25 @@ class DecisionMakerService:
         )
         return any(keyword in lowered for keyword in secretary_keywords)
 
+    @staticmethod
+    def _looks_like_generation_intent(text: str) -> bool:
+        lowered = (text or "").strip().lower()
+        if not lowered:
+            return False
+        patterns = (
+            r"\bсгенер\w*",
+            r"\bнарис\w*",
+            r"\bсоздай\s+(?:картин\w*|изображен\w*|арт|фото)\b",
+            r"\bсделай\s+(?:картин\w*|арт|иллюстрац\w*|фото|селфи)\b",
+            r"\bпокажи\s+себя\b",
+            r"\bпокажи\s+как\s+ты\b",
+            r"\bкак\s+ты\s+выглядишь\b",
+            r"\bфотк\w*\b",
+            r"\bаватар\w*\b",
+            r"\bселфи\b",
+        )
+        return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in patterns)
+
     async def decide(
         self,
         envelope: MessageEnvelope,
@@ -144,11 +164,27 @@ class DecisionMakerService:
         reason = str(payload.get("reason", "")).strip()
         fallback = False
         secretary_by_keyword = self._looks_like_secretary_intent(envelope.text)
-        if module is None or confidence < self.settings.chad_decision_min_confidence:
-            module = ModuleName.SECRETARY if secretary_by_keyword else ModuleName.CHAT
+        generation_by_keyword = self._looks_like_generation_intent(envelope.text)
+        if module in {None, ModuleName.CHAT} and generation_by_keyword and not secretary_by_keyword:
+            module = ModuleName.GENERATION
             fallback = True
             if not reason:
-                reason = "fallback_secretary_keyword" if secretary_by_keyword else "fallback_chat"
+                reason = "fallback_generation_keyword"
+        elif module is None or confidence < self.settings.chad_decision_min_confidence:
+            if secretary_by_keyword:
+                module = ModuleName.SECRETARY
+            elif generation_by_keyword:
+                module = ModuleName.GENERATION
+            else:
+                module = ModuleName.CHAT
+            fallback = True
+            if not reason:
+                if secretary_by_keyword:
+                    reason = "fallback_secretary_keyword"
+                elif generation_by_keyword:
+                    reason = "fallback_generation_keyword"
+                else:
+                    reason = "fallback_chat"
         decision = RouteDecision(
             module=module,
             confidence=confidence,

@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     chad_image_intent_model: str = Field(default="gpt-5-nano", alias="CHAD_IMAGE_INTENT_MODEL")
     chad_image_intent_timeout_seconds: float = Field(default=1.2, alias="CHAD_IMAGE_INTENT_TIMEOUT_SECONDS")
     chad_image_intent_threshold: int = Field(default=7, alias="CHAD_IMAGE_INTENT_THRESHOLD")
+    chad_image_prompt_model: str = Field(default="gpt-5-nano", alias="CHAD_IMAGE_PROMPT_MODEL")
+    chad_image_prompt_timeout_seconds: float = Field(default=3.0, alias="CHAD_IMAGE_PROMPT_TIMEOUT_SECONDS")
 
     allowed_user_ids: set[int] = Field(default_factory=set, alias="ALLOWED_USER_IDS")
     allowed_chat_ids: set[int] = Field(default_factory=set, alias="ALLOWED_CHAT_IDS")
