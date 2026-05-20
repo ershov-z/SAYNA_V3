@@ -181,7 +181,13 @@ class ChadAIClient:
             )
             data = response.json()
         except httpx.HTTPError as exc:
-            logger.warning("chad_ai rerank request failed: %s", exc)
+            logger.warning(
+                "chad_ai rerank request failed model=%s timeout=%s error=%s(%r)",
+                self._settings.chad_ai_model,
+                timeout_seconds,
+                type(exc).__name__,
+                exc,
+            )
             return list(range(len(candidates)))
 
         choice = (data.get("choices") or [{}])[0]
@@ -227,7 +233,13 @@ class ChadAIClient:
             )
             data = response.json()
         except httpx.HTTPError as exc:
-            logger.error("chad_ai request failed: %s", exc)
+            logger.error(
+                "chad_ai request failed model=%s timeout=%s error=%s(%r)",
+                model_name,
+                timeout_seconds,
+                type(exc).__name__,
+                exc,
+            )
             return (
                 "Я на месте, но внешний AI сейчас недоступен.\n"
                 "Проверь `CHAD_AI_BASE_URL` (должен указывать на `/api/v1`) и API-ключ, потом повтори через минуту."
