@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha1
+import logging
 from pathlib import Path
+from typing import Any
 
-from bot.config import get_settings
+from bot.config import Settings, get_settings
 from mempalace.palace import build_closet_lines, get_closets_collection, get_collection, upsert_closet_lines
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -22,20 +26,8 @@ def _entry_id(wing: str, title: str, text: str) -> str:
     return f"{wing}_{sha1(stamp.encode('utf-8')).hexdigest()[:16]}"
 
 
-def main() -> None:
-    settings = get_settings()
-    palace_path = Path(settings.mempalace_palace_dir)
-    palace_path.mkdir(parents=True, exist_ok=True)
-
-    shared_wing = f"{settings.mempalace_wing_prefix}_shared"
-
-    users = {
-        752142337: {"name": "Захар", "username": "fenptropill_cosplay"},
-        495538754: {"name": "Катя", "username": "Tenebris_cosplay"},
-        381448542: {"name": "Софа", "username": "salmo_salar"},
-    }
-
-    facts: list[SeedFact] = [
+def _seed_facts() -> list[SeedFact]:
+    return [
         SeedFact(
             title="users_map",
             room="profiles",
@@ -90,12 +82,38 @@ def main() -> None:
         ),
     ]
 
-    collection = get_collection(str(palace_path), create=True)
-    closets = get_closets_collection(str(palace_path), create=True)
-    now = datetime.now(timezone.utc).isoformat()
+def _result_get(result: Any, key: str) -> list[Any]:
+    getter = getattr(result, "get", None)
+    if callable(getter):
+        value = getter(key, [])
+        return value or []
+    return []
 
-    rows = []
-    for fact in facts:
+
+def _collection_has_entries(collection: Any) -> bool:
+    counter = getattr(collection, "count", None)
+    if callable(counter):
+        try:
+            return int(counter()) > 0
+        except Exception:
+            logger.warning("Seed precheck via count() failed; fallback to get()", exc_info=True)
+    getter = getattr(collection, "get", None)
+    if callable(getter):
+        try:
+            result = getter(limit=1)
+            ids = _result_get(result, "ids")
+            if ids and isinstance(ids[0], list):
+                return bool(ids[0])
+            return bool(ids)
+        except Exception:
+            logger.warning("Seed precheck via get() failed; treating as empty", exc_info=True)
+    return False
+
+
+def _build_rows(settings: Settings, now: str) -> list[dict[str, Any]]:
+    shared_wing = f"{settings.mempalace_wing_prefix}_shared"
+    rows: list[dict[str, Any]] = []
+    for fact in _seed_facts():
         target_wings = [shared_wing]
         if fact.user_id is not None:
             target_wings.append(f"{settings.mempalace_wing_prefix}_user_{fact.user_id}")
@@ -119,7 +137,25 @@ def main() -> None:
                     },
                 }
             )
+    return rows
 
+
+def seed_if_needed(settings: Settings | None = None) -> int:
+    settings = settings or get_settings()
+    if not settings.mempalace_enabled:
+        logger.info("Memory seed skipped: MEMPALACE_ENABLED=false")
+        return 0
+
+    palace_path = Path(settings.mempalace_palace_dir)
+    palace_path.mkdir(parents=True, exist_ok=True)
+    collection = get_collection(str(palace_path), create=True)
+    if _collection_has_entries(collection):
+        logger.info("Memory seed skipped: palace already contains entries")
+        return 0
+
+    closets = get_closets_collection(str(palace_path), create=True)
+    now = datetime.now(timezone.utc).isoformat()
+    rows = _build_rows(settings, now)
     collection.upsert(
         ids=[row["id"] for row in rows],
         documents=[row["document"] for row in rows],
@@ -141,7 +177,17 @@ def main() -> None:
             metadata=row["metadata"],
         )
 
-    print(f"Seeded {len(rows)} memory entries into {palace_path}")
+    logger.info("Seeded %s memory entries into %s", len(rows), palace_path)
+    return len(rows)
+
+
+def main() -> None:
+    seeded = seed_if_needed()
+    if seeded:
+        settings = get_settings()
+        print(f"Seeded {seeded} memory entries into {settings.mempalace_palace_dir}")
+    else:
+        print("Seed skipped: palace already initialized or memory disabled")
 
 
 if __name__ == "__main__":

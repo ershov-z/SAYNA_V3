@@ -27,6 +27,7 @@ from bot.middleware.sequential_processing import SequentialProcessingMiddleware
 from bot.scheduler.jobs import build_scheduler
 from bot.services.container import build_services
 from bot.services.reminders import ReminderService
+from scripts.seed_memory_profiles import seed_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,12 @@ async def main() -> None:
 
     services = build_services(settings, bot)
     dp.include_router(build_router(services))
+
+    seeded_entries = seed_if_needed(settings)
+    if seeded_entries:
+        logger.info("Initial memory seed completed entries=%s", seeded_entries)
+    else:
+        logger.info("Initial memory seed skipped (already initialized or disabled)")
 
     reminders = ReminderService(services.sheets, bot)
     scheduler = build_scheduler(settings, reminders, services.memory)
