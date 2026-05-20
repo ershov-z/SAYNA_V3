@@ -136,7 +136,7 @@ class DecisionMakerService:
             messages=messages,
             model=self.settings.chad_decision_model,
             timeout_seconds=self.settings.chad_decision_timeout_seconds,
-            max_tokens=120,
+            max_tokens=100000,
         )
         payload = self._extract_json(raw) or {}
         module = self._normalize_module(payload.get("module"))

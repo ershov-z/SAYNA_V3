@@ -87,7 +87,7 @@ class ImageIntentScorer:
         ]
         raw = await self.llm.complete(
             messages,
-            max_tokens=30,
+            max_tokens=100000,
             model=self.settings.chad_image_intent_model,
             timeout_seconds=self.settings.chad_image_intent_timeout_seconds,
         )

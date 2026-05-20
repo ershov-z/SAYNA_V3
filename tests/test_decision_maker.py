@@ -12,7 +12,7 @@ class FakeLLM:
     def __init__(self, response: str) -> None:
         self.response = response
 
-    async def complete(self, messages, max_tokens=700, *, model=None, timeout_seconds=None, images=None):  # noqa: ANN001
+    async def complete(self, messages, max_tokens=100000, *, model=None, timeout_seconds=None, images=None):  # noqa: ANN001
         return self.response
 
 

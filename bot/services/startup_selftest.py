@@ -103,7 +103,7 @@ class StartupSelfTestService:
             ],
             model=self.settings.startup_selftest_validator_model,
             timeout_seconds=self.settings.startup_selftest_timeout_seconds,
-            max_tokens=450,
+            max_tokens=100000,
         )
         logger.info("startup_selftest_validator_raw response=%r", raw)
         try:

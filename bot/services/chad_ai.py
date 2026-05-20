@@ -168,7 +168,7 @@ class ChadAIClient:
         try:
             endpoint, payload, headers = self._prepare_openai_compatible_payload(
                 rerank_messages,
-                max_tokens=80,
+                max_tokens=100000,
                 model=self._settings.chad_ai_model,
             )
             logger.info("chad_rerank_http_request endpoint=%s payload=%s", endpoint, payload)
@@ -198,7 +198,7 @@ class ChadAIClient:
     async def complete(
         self,
         messages: list[dict[str, Any]],
-        max_tokens: int = 700,
+        max_tokens: int = 100000,
         *,
         model: str | None = None,
         timeout_seconds: float | None = None,

@@ -339,7 +339,7 @@ class TaskOrderService:
                         ),
                     },
                 ]
-                raw = await self.llm.complete(messages, max_tokens=170, timeout_seconds=6.0)
+                raw = await self.llm.complete(messages, max_tokens=100000, timeout_seconds=6.0)
                 if "внешний ai сейчас недоступен" not in raw.lower():
                     maybe_text = self.soul.finalize_reply(raw).strip()
                     if maybe_text:
@@ -802,7 +802,7 @@ class TaskOrderService:
                 ),
             },
         ]
-        raw = await self.llm.complete(messages, max_tokens=240, timeout_seconds=8.0)
+        raw = await self.llm.complete(messages, max_tokens=100000, timeout_seconds=8.0)
         payload = self._parse_json_from_text(raw) or {}
         target_ids_raw = payload.get("target_order_ids", [])
         if not isinstance(target_ids_raw, list):
@@ -963,7 +963,7 @@ class TaskOrderService:
                 ),
             },
         ]
-        raw = await self.llm.complete(messages, max_tokens=420, timeout_seconds=10.0)
+        raw = await self.llm.complete(messages, max_tokens=100000, timeout_seconds=10.0)
         payload = self._parse_json_from_text(raw)
         if not payload:
             return MutationPlanResult(preview="", action_type="update", confidence=0.0, ambiguity="", operations=[])
@@ -1194,7 +1194,7 @@ class TaskOrderService:
                 ),
             },
         ]
-        reply = await self.llm.complete(messages, max_tokens=320, timeout_seconds=8.0)
+        reply = await self.llm.complete(messages, max_tokens=100000, timeout_seconds=8.0)
         if "внешний AI сейчас недоступен" in reply.lower():
             if force_list_view:
                 return self._format_orders_digest(all_orders)

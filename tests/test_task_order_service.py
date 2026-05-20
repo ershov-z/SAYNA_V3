@@ -135,7 +135,7 @@ class FakeBot:
 
 
 class FakeLLM:
-    async def complete(self, messages, max_tokens=700, timeout_seconds=None):  # noqa: ANN001
+    async def complete(self, messages, max_tokens=100000, timeout_seconds=None):  # noqa: ANN001
         text = str(messages[-1]["content"]).lower()
         if "удали первый заказ" in text and "палка из гачикуты" in text:
             return (

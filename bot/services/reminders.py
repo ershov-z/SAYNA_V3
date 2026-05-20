@@ -124,7 +124,7 @@ class ReminderService:
             },
         ]
         try:
-            raw = await self.llm.complete(messages, max_tokens=170, timeout_seconds=6.0)
+            raw = await self.llm.complete(messages, max_tokens=100000, timeout_seconds=6.0)
         except Exception as exc:  # pragma: no cover - external network guard
             logger.warning("failed_to_generate_todo_message stage=%s error=%s", stage, exc)
             return default_initial if stage == "initial" else default_followup

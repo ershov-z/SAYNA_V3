@@ -73,7 +73,7 @@ class GroupIntentScorer:
         ]
         raw = await self.llm.complete(
             messages,
-            max_tokens=30,
+            max_tokens=100000,
             model=self.settings.chad_intent_model,
             timeout_seconds=self.settings.group_intent_timeout_seconds,
         )
