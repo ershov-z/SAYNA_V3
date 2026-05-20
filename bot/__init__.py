@@ -1,0 +1,1 @@
+"""Telegram workshop assistant package."""

@@ -1,0 +1,16 @@
+[Unit]
+Description=Workshop Telegram Assistant Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/workshop-bot
+EnvironmentFile=/opt/workshop-bot/.env
+ExecStart=/opt/workshop-bot/.venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

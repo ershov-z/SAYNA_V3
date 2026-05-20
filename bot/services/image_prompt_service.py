@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import re
+
+SAINA_APPEARANCE_PROMPT = """
+Персонаж: Сайна, аниме-девушка ассистент-секретарь для косплейной мастерской.
+
+Внешность:
+Сайна выглядит как молодая взрослая девушка 22-25 лет. У неё спокойная, умная и немного загадочная внешность. Лицо мягкое, аккуратное, с выразительными внимательными глазами. Взгляд живой, собранный, будто она одновременно слушает собеседника и держит в голове список задач. Выражение лица обычно спокойное, с лёгкой уверенной полуулыбкой.
+
+Волосы:
+Длинные волосы холодного оттенка: серебристо-белые, пепельно-голубые или светло-серые, с мягким голубым или фиолетовым градиентом на концах. Волосы гладкие, но не идеально пластиковые: есть живые пряди, лёгкая асимметрия, несколько прядей у лица. Причёска аккуратная, секретарская, но не строгая. Можно добавить маленькую заколку, ленту или минималистичный технологичный аксессуар.
+
+Глаза:
+Большие выразительные глаза холодного оттенка: голубые, серо-голубые или фиолетово-синие. В глазах лёгкий эффект цифрового свечения, но очень деликатный, без сильного киберпанка. Взгляд внимательный, заботливый, немного ироничный.
+
+Телосложение:
+Стройная взрослая фигура, естественные пропорции, изящная осанка. Она выглядит собранной, уверенной и аккуратной. Не детская, не чрезмерно сексуализированная, без гипертрофированных пропорций.
+
+Одежда:
+Стильный образ секретаря мастерской с лёгкой AI-эстетикой. Белая или светло-серая рубашка, тёмный жилет или укороченный жакет, аккуратная юбка-карандаш или строгие брюки. На шее тонкая лента, галстук или аккуратный бант. Цветовая палитра: белый, графитовый, тёмно-синий, серебристый, холодный голубой, немного фиолетового акцента.
+
+Детали:
+На ней может быть бейдж, маленький планшет, стилус, блокнот, чеклист заказов, сантиметровая лента, ключи от мастерской, небольшие аккуратные инструменты на поясе или рядом. Детали должны подчёркивать, что она секретарь косплейной мастерской: она следит за заказами, дедлайнами, материалами и расписанием.
+
+Общее ощущение:
+Сайна - не боевой андроид и не офисный NPC. Она выглядит как персонажный AI-ассистент, который стал лицом мастерской: умная, спокойная, немного язвительная, заботливая, организованная. В её образе должны сочетаться уют мастерской, порядок, технологичность и лёгкая загадочность.
+
+Стиль изображения:
+Clean modern anime art, polished character design, soft lighting, detailed but not overloaded, elegant silhouette, readable design, high-quality anime illustration, soft shadows, subtle futuristic interface glow, cozy workshop atmosphere.
+
+Важно:
+Сохранять узнаваемость персонажа: холодные светлые волосы, голубо-фиолетовые акценты, спокойный внимательный взгляд, секретарско-мастерской образ, планшет или чеклист как ключевой аксессуар.
+""".strip()
+
+
+class ImagePromptService:
+    IMAGE_TRIGGER_PATTERNS = (
+        r"\bсгенер\w*",
+        r"\bнарис\w*",
+        r"\bсделай\s+(?:картин\w*|арт|иллюстрац\w*|фото)\b",
+        r"\bкартинк\w*\b",
+        r"\bизображен\w*\b",
+        r"\bарт\b",
+        r"\billustration\b",
+        r"\bimage\b",
+    )
+    SELF_DESCRIPTION_PATTERNS = (
+        r"\bопиши\s+себя\b",
+        r"\bпокажи\s+себя\b",
+        r"\bнарисуй\s+себя\b",
+        r"\bкак\s+ты\s+выглядишь\b",
+        r"\bкак\s+выглядишь\b",
+        r"\bтвоя\s+внешн\w*\b",
+        r"\bтво[её]\s+лиц\w*\b",
+        r"\bтвой\s+образ\b",
+        r"\bпришли\s+(?:сво[её]|тво[её])\s+(?:фото|картин\w*|арт)\b",
+        r"\bселфи\b",
+    )
+    SAINA_PATTERNS = (
+        r"\bсайн\w*\b",
+        r"\bsaina\b",
+        r"\bбот\w*\b",
+        r"\bассистент\w*\b",
+        r"\bсекретар\w*\b",
+        r"\bе[её]\s+(?:фото|картин\w*|арт)\b",
+        r"\bтеб[яе]\b",
+        r"\bты\b",
+        r"\bтвой\b",
+        r"\bтвоя\b",
+        r"\bтво[её]\b",
+        r"\bтвои\b",
+        r"\bсебя\b",
+        r"\bпокажи\s+себя\b",
+        r"\bнарисуй\s+себя\b",
+        r"\bкак\s+ты\s+выглядишь\b",
+        r"\bселфи\b",
+    )
+
+    @staticmethod
+    def _clean_user_prompt(text: str) -> str:
+        prompt = text.strip()
+        prompt = re.sub(r"^\s*(сайна[,:\-]?\s*)", "", prompt, flags=re.IGNORECASE)
+        return prompt.strip()
+
+    def is_image_request(self, text: str) -> bool:
+        lowered = text.lower().strip()
+        if not lowered:
+            return False
+        return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in self.IMAGE_TRIGGER_PATTERNS) or self.is_self_description_request(lowered)
+
+    def is_self_description_request(self, text: str) -> bool:
+        lowered = text.lower().strip()
+        return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in self.SELF_DESCRIPTION_PATTERNS)
+
+    def is_saina_request(self, text: str) -> bool:
+        lowered = text.lower().strip()
+        return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in self.SAINA_PATTERNS)
+
+    def build_prompt(self, user_text: str) -> str:
+        cleaned = self._clean_user_prompt(user_text)
+        if not cleaned:
+            return ""
+        if self.is_saina_request(cleaned):
+            return (
+                f"{SAINA_APPEARANCE_PROMPT}\n\n"
+                "Сюжет/запрос пользователя (адаптируй образ, позу, сцену и детали под это описание, "
+                "но сохраняй узнаваемость Сайны):\n"
+                f"{cleaned}"
+            )
+        return cleaned
+
+    def build_caption(self, user_text: str) -> str:
+        cleaned = self._clean_user_prompt(user_text)
+        if not cleaned:
+            return "Готово."
+        excerpt = cleaned.replace("\n", " ").strip()
+        if len(excerpt) > 160:
+            excerpt = excerpt[:157].rstrip() + "..."
+        if self.is_saina_request(cleaned):
+            return f"Сгенерировала Сайну по запросу: {excerpt}"
+        return f"Сгенерировала по запросу: {excerpt}"
