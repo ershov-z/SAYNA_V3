@@ -316,11 +316,35 @@ class TaskOrderService:
             to_user = int(todo["to_user_id"])
             from_user = int(todo["from_user_id"])
             due_at_raw = str(todo.get("due_at", "")).strip()
-            due_hint = f"\nДедлайн: {due_at_raw}" if due_at_raw else ""
-            await self.bot.send_message(
-                to_user,
-                f"Новая просьба от user{from_user}: {todo['text']}{due_hint}",
-            )
+            default_text = f"Новая просьба от user{from_user}: {todo['text']}" + (f"\nДедлайн: {due_at_raw}" if due_at_raw else "")
+            text = default_text
+            if self.llm is not None and self.soul is not None:
+                messages = [
+                    {"role": "system", "content": self.soul.persona},
+                    {"role": "system", "content": self.soul.module_style_prompt("secretary")},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Сформируй короткое личное сообщение о новой просьбе. "
+                            "Укажи, кто попросил, что сделать и дедлайн (если есть). "
+                            "Не выдумывай детали."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Кто попросил: user{from_user}\n"
+                            f"Что сделать: {todo['text']}\n"
+                            f"Дедлайн: {due_at_raw or 'не указан'}"
+                        ),
+                    },
+                ]
+                raw = await self.llm.complete(messages, max_tokens=170, timeout_seconds=6.0)
+                if "внешний ai сейчас недоступен" not in raw.lower():
+                    maybe_text = self.soul.finalize_reply(raw).strip()
+                    if maybe_text:
+                        text = maybe_text
+            await self.bot.send_message(to_user, text)
             mark_reminded = getattr(self.sheets, "mark_todo_reminded", None)
             if callable(mark_reminded):
                 await mark_reminded(str(todo["todo_id"]))

@@ -6,16 +6,26 @@ import logging
 
 from aiogram import Bot
 
+from bot.services.chad_ai import ChadAIClient
 from bot.services.sheets import GoogleSheetsService
+from bot.services.soul import SoulService
 
 logger = logging.getLogger(__name__)
 FOLLOWUP_LEAD_MINUTES = 10
 
 
 class ReminderService:
-    def __init__(self, sheets: GoogleSheetsService, bot: Bot) -> None:
+    def __init__(
+        self,
+        sheets: GoogleSheetsService,
+        bot: Bot,
+        llm: ChadAIClient | None = None,
+        soul: SoulService | None = None,
+    ) -> None:
         self.sheets = sheets
         self.bot = bot
+        self.llm = llm
+        self.soul = soul
 
     @staticmethod
     def _normalize_name(value: object) -> str:
@@ -75,6 +85,56 @@ class ReminderService:
         )
         return []
 
+    async def _compose_todo_message(self, *, todo: dict, stage: str) -> str:
+        from_user = int(todo["from_user_id"])
+        task_text = str(todo.get("text", "")).strip()
+        due_at = str(todo.get("due_at", "")).strip()
+        default_initial = f"Новая просьба от user{from_user}: {task_text}" + (f"\nДедлайн: {due_at}" if due_at else "")
+        default_followup = (
+            f"Через {FOLLOWUP_LEAD_MINUTES} минут дедлайн по просьбе от user{from_user}: {task_text}\n"
+            "Получилось выполнить?"
+        )
+        if self.llm is None or self.soul is None:
+            return default_initial if stage == "initial" else default_followup
+
+        stage_prompt = (
+            "Это первое уведомление о новой просьбе."
+            if stage == "initial"
+            else "Это follow-up за 10 минут до дедлайна. Нужно аккуратно спросить, получилось ли выполнить."
+        )
+        messages = [
+            {"role": "system", "content": self.soul.persona},
+            {"role": "system", "content": self.soul.module_style_prompt("secretary")},
+            {
+                "role": "system",
+                "content": (
+                    "Сформируй короткое личное сообщение исполнителю. "
+                    "Не выдумывай факты, не используй markdown-списки. "
+                    "Важные факты: кто попросил, что сделать, дедлайн (если есть)."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{stage_prompt}\n"
+                    f"Кто попросил: user{from_user}\n"
+                    f"Что сделать: {task_text}\n"
+                    f"Дедлайн: {due_at or 'не указан'}"
+                ),
+            },
+        ]
+        try:
+            raw = await self.llm.complete(messages, max_tokens=170, timeout_seconds=6.0)
+        except Exception as exc:  # pragma: no cover - external network guard
+            logger.warning("failed_to_generate_todo_message stage=%s error=%s", stage, exc)
+            return default_initial if stage == "initial" else default_followup
+        if "внешний ai сейчас недоступен" in raw.lower():
+            return default_initial if stage == "initial" else default_followup
+        rendered = self.soul.finalize_reply(raw)
+        if not rendered.strip():
+            return default_initial if stage == "initial" else default_followup
+        return rendered
+
     async def send_order_progress_ping(self) -> None:
         orders = await self.sheets.list_active_orders()
         owners: dict[int, list[dict]] = {}
@@ -124,11 +184,10 @@ class ReminderService:
             from_user = int(todo["from_user_id"])
 
             if last_reminded_at is None:
-                due_hint = f"\nДедлайн: {due_at.isoformat()}" if due_at is not None else ""
-                await self.bot.send_message(
-                    to_user,
-                    f"Новая просьба от user{from_user}: {todo['text']}{due_hint}",
-                )
+                todo_payload = dict(todo)
+                todo_payload["due_at"] = due_at.isoformat() if due_at is not None else ""
+                text = await self._compose_todo_message(todo=todo_payload, stage="initial")
+                await self.bot.send_message(to_user, text)
                 await self.sheets.mark_todo_reminded(str(todo["todo_id"]))
                 continue
 
@@ -139,11 +198,6 @@ class ReminderService:
             seconds_left = (due_at - now).total_seconds()
             should_send_followup = 0 < seconds_left <= FOLLOWUP_LEAD_MINUTES * 60 and last_reminded_at < followup_window_start
             if should_send_followup:
-                await self.bot.send_message(
-                    to_user,
-                    (
-                        f"Через {FOLLOWUP_LEAD_MINUTES} минут дедлайн по просьбе от user{from_user}: {todo['text']}\n"
-                        "Получилось выполнить?"
-                    ),
-                )
+                text = await self._compose_todo_message(todo=todo, stage="followup")
+                await self.bot.send_message(to_user, text)
                 await self.sheets.mark_todo_reminded(str(todo["todo_id"]))

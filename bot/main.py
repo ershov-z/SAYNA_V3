@@ -96,7 +96,7 @@ async def main() -> None:
     else:
         logger.info("Initial memory seed skipped (already initialized or disabled)")
 
-    reminders = ReminderService(services.sheets, bot)
+    reminders = ReminderService(services.sheets, bot, llm=services.llm, soul=services.soul)
     scheduler = build_scheduler(settings, reminders, services.memory)
     scheduler.start()
 
