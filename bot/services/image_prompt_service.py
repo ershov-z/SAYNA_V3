@@ -38,16 +38,10 @@ class ImagePromptService:
     IMAGE_TRIGGER_PATTERNS = (
         r"\bсгенер\w*",
         r"\bнарис\w*",
-        r"\bсоздай\s+(?:картин\w*|изображен\w*|арт|фото)\b",
         r"\bсделай\s+(?:картин\w*|арт|иллюстрац\w*|фото)\b",
-        r"\bсделай\s+селфи\b",
-        r"\bпокажи\s+как\s+ты\b",
-        r"\bпокажи\s+себя\b",
         r"\bкартинк\w*\b",
         r"\bизображен\w*\b",
         r"\bарт\b",
-        r"\bфотк\w*\b",
-        r"\bаватар\w*\b",
         r"\billustration\b",
         r"\bimage\b",
     )
@@ -103,7 +97,7 @@ class ImagePromptService:
         lowered = text.lower().strip()
         return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in self.SAINA_PATTERNS)
 
-    def build_base_prompt(self, user_text: str) -> str:
+    def build_prompt(self, user_text: str) -> str:
         cleaned = self._clean_user_prompt(user_text)
         if not cleaned:
             return ""

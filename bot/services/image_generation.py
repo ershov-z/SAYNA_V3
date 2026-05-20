@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from bot.config import Settings
-from bot.services.chad_ai import ChadAIClient
 from bot.services.image_prompt_service import ImagePromptService
 
 logger = logging.getLogger(__name__)
@@ -26,10 +24,9 @@ class ImageGenerationResult:
 
 
 class ChadImageService:
-    def __init__(self, settings: Settings, prompt_service: ImagePromptService, llm: ChadAIClient) -> None:
+    def __init__(self, settings: Settings, prompt_service: ImagePromptService) -> None:
         self.settings = settings
         self.prompt_service = prompt_service
-        self.llm = llm
         self._client = httpx.AsyncClient(
             base_url=settings.chad_image_base_url.rstrip("/"),
             timeout=settings.chad_image_timeout_seconds,
@@ -41,52 +38,6 @@ class ChadImageService:
 
     def is_image_request(self, text: str) -> bool:
         return self.prompt_service.is_image_request(text)
-
-    @staticmethod
-    def _cleanup_llm_prompt(raw: str) -> str:
-        text = (raw or "").strip()
-        if text.startswith("```") and text.endswith("```"):
-            lines = text.splitlines()
-            if len(lines) >= 3:
-                text = "\n".join(lines[1:-1]).strip()
-        text = re.sub(r"^\s*(промпт|prompt)\s*:\s*", "", text, flags=re.IGNORECASE)
-        return text.strip()
-
-    async def _build_final_prompt(self, user_text: str) -> str:
-        base_prompt = self.prompt_service.build_base_prompt(user_text)
-        if not base_prompt:
-            return ""
-        if not self.prompt_service.is_saina_request(user_text):
-            return base_prompt
-
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Ты редактор промптов для image-generation модели. "
-                    "Собери один финальный промпт для realistic/anime portrait generation. "
-                    "Сохраняй ключевую внешность Сайны и адаптируй сцену под запрос пользователя. "
-                    "Верни только готовый промпт, без пояснений, без Markdown, без списка вариантов."
-                ),
-            },
-            {"role": "user", "content": base_prompt},
-        ]
-        llm_text = await self.llm.complete(
-            messages,
-            max_tokens=420,
-            model=self.settings.chad_image_prompt_model,
-            timeout_seconds=self.settings.chad_image_prompt_timeout_seconds,
-        )
-        cleaned = self._cleanup_llm_prompt(llm_text)
-        if (
-            not cleaned
-            or len(cleaned) < 30
-            or "внешний ai сейчас недоступен" in cleaned.lower()
-            or "проверь `chad_ai_base_url`" in cleaned.lower()
-        ):
-            logger.warning("image_prompt_fallback_to_base_prompt raw=%r", llm_text[:220])
-            return base_prompt
-        return cleaned
 
     async def _imagine(self, prompt: str) -> tuple[str, str]:
         endpoint = f"/api/public/{self.settings.chad_image_model}/imagine"
@@ -114,7 +65,7 @@ class ChadImageService:
         if not self.is_image_request(user_text):
             return ImageGenerationResult(handled=False)
 
-        prompt = await self._build_final_prompt(user_text)
+        prompt = self.prompt_service.build_prompt(user_text)
         if not prompt:
             return ImageGenerationResult(
                 handled=True,
