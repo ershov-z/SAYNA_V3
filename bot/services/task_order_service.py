@@ -7,12 +7,16 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aiogram import Bot
 
 from bot.services.chad_ai import ChadAIClient
 from bot.services.sheets import GoogleSheetsService
 from bot.services.soul import SoulService
+
+if TYPE_CHECKING:
+    from bot.services.digest import DigestService
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +151,10 @@ TODO_USER_ALIASES: dict[str, int] = {
 }
 
 TODO_SELF_REFERENCES = {"я", "мне", "меня", "мой", "моя", "моё", "мое"}
+DIGEST_REQUEST_PATTERN = re.compile(
+    r"(?:^/digest$|\bдайджест\b|\bсводк\w+\s+за\s+сут\w*\b|\bсобер[ио]\w*\s+дайджест\b)",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -235,11 +243,13 @@ class TaskOrderService:
         llm: ChadAIClient | None = None,
         soul: SoulService | None = None,
         bot: Bot | None = None,
+        digest: "DigestService | None" = None,
     ) -> None:
         self.sheets = sheets
         self.llm = llm
         self.soul = soul
         self.bot = bot
+        self.digest = digest
         self._last_order_by_user: dict[int, str] = {}
         self._pending_mutation_by_user: dict[int, PendingMutationPlan] = {}
         self._order_dialogue_by_user: dict[int, deque[list[str]]] = {}
@@ -1228,6 +1238,13 @@ class TaskOrderService:
             return True
         return "заказ" in lowered
 
+    @staticmethod
+    def _is_digest_request(text: str) -> bool:
+        normalized = text.strip()
+        if not normalized:
+            return False
+        return bool(DIGEST_REQUEST_PATTERN.search(normalized))
+
     async def try_handle_command(
         self,
         text: str,
@@ -1254,6 +1271,12 @@ class TaskOrderService:
                 if not applied_logs:
                     return ParseResult(True, "Не смогла применить изменения: не распознала операции.")
                 return ParseResult(True, "Приняла подтверждение. " + "; ".join(applied_logs) + ".")
+
+        if self._is_digest_request(normalized):
+            if self.digest is None:
+                return ParseResult(True, "Функция дайджеста пока не подключена.")
+            digest = await self.digest.build_digest(window_hours=24, trigger="manual")
+            return ParseResult(True, digest.text)
 
         orders_snapshot: list[dict[str, object]] = []
         if self._is_order_related_message(normalized, from_user_id):

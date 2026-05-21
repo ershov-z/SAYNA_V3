@@ -7,13 +7,19 @@ from apscheduler.triggers.cron import CronTrigger
 from zoneinfo import ZoneInfo
 
 from bot.config import Settings
+from bot.services.digest import DigestService
 from bot.services.memory import MemPalaceService
 from bot.services.reminders import ReminderService
 
 logger = logging.getLogger(__name__)
 
 
-def build_scheduler(settings: Settings, reminders: ReminderService, memory: MemPalaceService) -> AsyncIOScheduler:
+def build_scheduler(
+    settings: Settings,
+    reminders: ReminderService,
+    memory: MemPalaceService,
+    digest: DigestService,
+) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=ZoneInfo(settings.timezone))
 
     scheduler.add_job(
@@ -34,6 +40,12 @@ def build_scheduler(settings: Settings, reminders: ReminderService, memory: MemP
         trigger="interval",
         minutes=settings.reminder_interval_minutes,
         id="todo_reminders",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        digest.send_daily_digest,
+        trigger=CronTrigger(hour=settings.daily_digest_hour, minute=settings.daily_digest_minute),
+        id="daily_digest",
         replace_existing=True,
     )
     scheduler.add_job(

@@ -80,6 +80,16 @@ def _seed_facts() -> list[SeedFact]:
             room="household",
             text="У них есть кошка по имени Юта.",
         ),
+        SeedFact(
+            title="workshop_name",
+            room="profiles",
+            text="Мастерская называется TENEBRIS COSPLAY WORKSHOP.",
+        ),
+        SeedFact(
+            title="workshop_specialization",
+            room="profiles",
+            text="TENEBRIS COSPLAY WORKSHOP занимается 3D-печатью, пошивом и электроникой.",
+        ),
     ]
 
 def _result_get(result: Any, key: str) -> list[Any]:

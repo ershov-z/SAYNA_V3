@@ -134,6 +134,14 @@ class FakeBot:
         self.sent_messages.append((user_id, text))
 
 
+class FakeDigest:
+    async def build_digest(self, *, window_hours=24, trigger="manual"):  # noqa: ANN001
+        class Result:
+            text = "Собрала дайджест за сутки."
+
+        return Result()
+
+
 class FakeLLM:
     async def complete(self, messages, max_tokens=100000, timeout_seconds=None):  # noqa: ANN001
         text = str(messages[-1]["content"]).lower()
@@ -429,3 +437,11 @@ async def test_edit_order_natural_block_uses_mutation_not_creation():
     assert "обновила ответственного заказа ab12cd34 на «Захар»" in result.text
     assert "обновила сумму заказа ab12cd34 на 12000" in result.text
     assert "обновила стоимость материалов заказа ab12cd34 на 4000" in result.text
+
+
+@pytest.mark.asyncio
+async def test_manual_digest_command_calls_digest_service():
+    service = TaskOrderService(FakeSheets(), digest=FakeDigest())  # type: ignore[arg-type]
+    result = await service.try_handle_command("/digest", from_user_id=1)
+    assert result.handled is True
+    assert "дайджест" in result.text.lower()

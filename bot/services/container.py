@@ -7,6 +7,7 @@ from aiogram import Bot
 from bot.config import Settings
 from bot.services.chad_ai import ChadAIClient
 from bot.services.decision_maker import DecisionMakerService
+from bot.services.digest import DigestService
 from bot.services.dialogue import DialogueService
 from bot.services.image_generation import ChadImageService
 from bot.services.image_intent_scorer import ImageIntentScorer
@@ -31,6 +32,7 @@ class ServiceContainer:
     sheets: GoogleSheetsService
     decision_maker: DecisionMakerService
     task_order: TaskOrderService
+    digest: DigestService
     dialogue: DialogueService
     secretary_module: SecretaryModule
     generation_module: GenerationModule
@@ -48,7 +50,8 @@ def build_services(settings: Settings, bot: Bot) -> ServiceContainer:
     memory = MemPalaceService(settings, reranker=llm)
     sheets = GoogleSheetsService(settings)
     decision_maker = DecisionMakerService(settings, llm, soul)
-    task_order = TaskOrderService(sheets, llm=llm, soul=soul, bot=bot)
+    digest = DigestService(settings=settings, bot=bot, llm=llm, soul=soul, memory=memory, sheets=sheets)
+    task_order = TaskOrderService(sheets, llm=llm, soul=soul, bot=bot, digest=digest)
     dialogue = DialogueService(settings, llm, memory, soul)
     image_prompt = ImagePromptService()
     image = ChadImageService(settings, prompt_service=image_prompt, llm=llm)
@@ -68,6 +71,7 @@ def build_services(settings: Settings, bot: Bot) -> ServiceContainer:
         sheets=sheets,
         decision_maker=decision_maker,
         task_order=task_order,
+        digest=digest,
         dialogue=dialogue,
         secretary_module=secretary_module,
         generation_module=generation_module,

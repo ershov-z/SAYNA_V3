@@ -520,6 +520,100 @@ class MemPalaceService:
         logger.info("memory_profile_fetch user_id=%s chars=%s", user_id, len(profile))
         return profile
 
+    async def list_shared_messages_window(
+        self,
+        *,
+        since: datetime,
+        until: datetime | None = None,
+        chat_id: int | None = None,
+        limit: int = 400,
+    ) -> list[MemoryMessage]:
+        """
+        Return shared-wing messages in the requested UTC time window.
+        """
+        if not self.settings.mempalace_enabled:
+            return []
+
+        start_utc = since.astimezone(timezone.utc) if since.tzinfo else since.replace(tzinfo=timezone.utc)
+        end_utc: datetime | None = None
+        if until is not None:
+            end_utc = until.astimezone(timezone.utc) if until.tzinfo else until.replace(tzinfo=timezone.utc)
+
+        def _parse_iso_utc(raw: object) -> datetime | None:
+            text = str(raw or "").strip()
+            if not text:
+                return None
+            text = text.replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(text)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        def _fetch() -> list[MemoryMessage]:
+            collection = self._get_collection()
+            try:
+                result = collection.get(
+                    where={"wing": self._shared_wing()},
+                    include=["documents", "metadatas"],
+                )
+            except Exception as exc:
+                logger.warning("shared messages fetch failed for digest window: %s", exc)
+                return []
+
+            docs = self._result_get(result, "documents")
+            metas = self._result_get(result, "metadatas")
+            rows: list[tuple[datetime, MemoryMessage]] = []
+            for doc, meta in zip(docs or [], metas or []):
+                meta = meta or {}
+                if str(meta.get("wing", "")) != self._shared_wing():
+                    continue
+                ts_raw = meta.get("timestamp") or meta.get("filed_at") or ""
+                ts = _parse_iso_utc(ts_raw)
+                if ts is None or ts < start_utc:
+                    continue
+                if end_utc is not None and ts >= end_utc:
+                    continue
+                if chat_id is not None and str(meta.get("chat_id", "")) != str(chat_id):
+                    continue
+                role = str(meta.get("role", "")).lower() or "user"
+                if role not in {"user", "assistant"}:
+                    continue
+                text = self._extract_role_text(str(doc or "")).strip()
+                if not text:
+                    continue
+                user_id_raw = str(meta.get("user_id", "0")).strip()
+                chat_id_raw = str(meta.get("chat_id", "0")).strip()
+                if not user_id_raw.lstrip("-").isdigit() or not chat_id_raw.lstrip("-").isdigit():
+                    continue
+                rows.append(
+                    (
+                        ts,
+                        MemoryMessage(
+                            role=role,
+                            user_id=int(user_id_raw),
+                            chat_id=int(chat_id_raw),
+                            text=text,
+                            created_at=ts.isoformat(),
+                        ),
+                    )
+                )
+            rows.sort(key=lambda item: item[0])
+            capped = [item for _, item in rows[-max(1, limit) :]]
+            return capped
+
+        messages = _fetch()
+        logger.info(
+            "memory_window_messages since=%s until=%s chat_id=%s returned=%s",
+            start_utc.isoformat(),
+            end_utc.isoformat() if end_utc else "",
+            chat_id,
+            len(messages),
+        )
+        return messages
+
     async def sweep(self) -> bool:
         """
         Runtime mode writes directly into the palace, so periodic sweep is a no-op.

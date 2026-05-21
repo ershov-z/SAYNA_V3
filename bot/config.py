@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     timezone: str = Field(default="Europe/Moscow", alias="TZ")
     daily_progress_check_hour: int = Field(default=10, alias="DAILY_PROGRESS_CHECK_HOUR")
     daily_progress_check_minute: int = Field(default=0, alias="DAILY_PROGRESS_CHECK_MINUTE")
+    daily_digest_hour: int = Field(default=23, alias="DAILY_DIGEST_HOUR")
+    daily_digest_minute: int = Field(default=0, alias="DAILY_DIGEST_MINUTE")
+    digest_chat_id: int = Field(default=0, alias="DIGEST_CHAT_ID")
     reminder_interval_minutes: int = Field(default=180, alias="REMINDER_INTERVAL_MINUTES")
 
     google_service_account_file: str = Field(default="credentials/google-service-account.json", alias="GOOGLE_SERVICE_ACCOUNT_FILE")

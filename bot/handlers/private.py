@@ -54,6 +54,11 @@ def setup_private_handlers(services: ServiceContainer) -> Router:
         result = await services.task_order.try_handle_command("/todos", message.from_user.id)
         await safe_answer(message, result.text)
 
+    @router.message(F.chat.type == "private", Command("digest"))
+    async def run_digest(message: Message) -> None:
+        result = await services.task_order.try_handle_command("/digest", message.from_user.id)
+        await safe_answer(message, result.text)
+
     @router.message(F.chat.type == "private")
     async def private_text(message: Message) -> None:
         user_text = (message.text or message.caption or "").strip()
