@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.config import get_settings
 from bot.handlers import build_router
@@ -109,6 +110,44 @@ async def main() -> None:
                 raise RuntimeError(f"Startup self-test failed: {result.details}")
         else:
             logger.info("Startup self-test passed score=%s", result.score)
+
+    if settings.digest_chat_id != 0:
+        startup_messages = [
+            {"role": "system", "content": services.soul.persona},
+            {"role": "system", "content": services.soul.module_style_prompt("chat")},
+            {
+                "role": "system",
+                "content": (
+                    "Ты только что перезапустилась и возвращаешься в общий чат. "
+                    "Сформулируй короткое живое сообщение в стиле персонажа: "
+                    "1-2 предложения, дружелюбно, без технических деталей, без markdown."
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Напиши сообщение в общий чат о том, что ты снова на связи и готова помогать.",
+            },
+        ]
+        startup_raw = await services.llm.complete(startup_messages, timeout_seconds=10.0, max_tokens=400)
+        startup_text = services.soul.finalize_reply(startup_raw).strip()
+        if not startup_text:
+            startup_text = "Я снова на связи и готова помогать в общем чате."
+        try:
+            await bot.send_message(settings.digest_chat_id, startup_text)
+        except TelegramBadRequest as exc:
+            if "can't parse entities" not in str(exc):
+                raise
+            logger.warning(
+                "startup_announcement_fallback_to_plain_text chat_id=%s text=%r error=%s",
+                settings.digest_chat_id,
+                startup_text,
+                exc,
+            )
+            await bot.send_message(settings.digest_chat_id, startup_text, parse_mode=None)
+        await services.memory.remember("assistant", user_id=0, chat_id=settings.digest_chat_id, text=startup_text)
+        logger.info("startup_announcement_sent chat_id=%s", settings.digest_chat_id)
+    else:
+        logger.info("startup_announcement_skipped_missing_digest_chat_id")
 
     logger.info("Bot started")
     try:
