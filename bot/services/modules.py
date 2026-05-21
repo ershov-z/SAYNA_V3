@@ -32,11 +32,7 @@ class GenerationModule:
     async def handle(self, request: ModuleRequest) -> ModuleResponse:
         result = await self.image.try_generate(request.envelope.text)
         if result.handled and result.success:
-            caption_source = result.caption or "Готово."
-            if request.memory_context.strip():
-                memory_hint = request.memory_context.splitlines()[-1][:180]
-                caption_source = f"{caption_source}\nУчла контекст из памяти: {memory_hint}"
-            caption = self.soul.finalize_reply(caption_source)
+            caption = self.soul.finalize_reply(result.caption or "Готово.")
             return ModuleResponse(module=ModuleName.GENERATION, text=caption, image_url=result.image_url)
         if result.handled:
             return ModuleResponse(module=ModuleName.GENERATION, text=self.soul.finalize_reply(result.error_message))

@@ -73,7 +73,7 @@ class ChadImageService:
         ]
         llm_text = await self.llm.complete(
             messages,
-            max_tokens=420,
+            max_tokens=10000,
             model=self.settings.chad_image_prompt_model,
             timeout_seconds=self.settings.chad_image_prompt_timeout_seconds,
         )
@@ -81,6 +81,7 @@ class ChadImageService:
         if (
             not cleaned
             or len(cleaned) < 30
+            or "не смог сформировать ответ" in cleaned.lower()
             or "внешний ai сейчас недоступен" in cleaned.lower()
             or "проверь `chad_ai_base_url`" in cleaned.lower()
         ):

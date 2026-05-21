@@ -115,7 +115,7 @@ class DialogueService:
             context_hint,
             user_text,
         )
-        recent_chat = await self.memory.get_recent_chat_messages(chat_id=chat_id, limit=15)
+        recent_chat = await self.memory.get_recent_chat_messages(chat_id=chat_id, limit=10)
         user_profile = await self.memory.get_user_profile_context(user_id=user_id)
         referenced_user_ids = self._resolve_target_users(
             chat_id=chat_id,
@@ -160,6 +160,14 @@ class DialogueService:
                     "без явной просьбы пользователя."
                 ),
             },
+            {
+                "role": "system",
+                "content": (
+                    "Приоритет контекста: сначала опирайся на последние 10 сообщений диалога, "
+                    "а блок релевантной памяти используй только как вторичный источник, если в последних сообщениях "
+                    "не хватает фактов."
+                ),
+            },
         ]
         if is_group_chat:
             messages.append(
@@ -197,8 +205,6 @@ class DialogueService:
                     ),
                 }
             )
-        if memory_context:
-            messages.append({"role": "system", "content": f"Релевантная память:\n{memory_context}"})
         if reply_to_text.strip():
             target = f"user_{reply_to_user_id}" if reply_to_user_id else "unknown_user"
             messages.append(
@@ -209,6 +215,8 @@ class DialogueService:
             )
         if recent_chat:
             messages.extend(recent_chat)
+        if memory_context:
+            messages.append({"role": "system", "content": f"Релевантная память (вторичный источник):\n{memory_context}"})
         messages.append({"role": "user", "content": user_text})
 
         reply = await self.llm.complete(messages, images=images or [])

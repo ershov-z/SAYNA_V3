@@ -125,6 +125,8 @@ class DecisionMakerService:
                     "Любые сообщения про дедлайн, статус выполнения, поручения, задачи и списки /orders /todos — это secretary. "
                     "Generation выбирай только когда пользователь явно хочет создать/сгенерировать изображение. "
                     "Если сомневаешься между secretary и chat, выбирай secretary. "
+                    "Сначала анализируй блок recent_chat (последние сообщения), "
+                    "а memory_context используй только как дополнительный источник, если recent_chat недостаточен. "
                     "Верни только JSON формата "
                     '{"module":"secretary|generation|chat","confidence":0..1,"reason":"коротко"}.'
                 ),
@@ -146,8 +148,8 @@ class DecisionMakerService:
                     f"context_hint={envelope.context_hint}\n"
                     f"has_images={'yes' if envelope.images else 'no'}\n"
                     f"reply_to_text={envelope.reply_to_text[:300]}\n"
-                    f"memory_context={memory_context[:700]}\n"
                     f"recent_chat={history_lines[:900]}\n"
+                    f"memory_context={memory_context[:700]}\n"
                     f"text={envelope.text}"
                 ),
             },
