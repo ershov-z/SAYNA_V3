@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from bot.config import Settings
-from bot.services.chad_ai import ChadAIClient
+from bot.services.chad_ai import ChadAIClient, ChadAIUnavailableError
 from bot.services.memory import MemPalaceService
 
 logger = logging.getLogger(__name__)
@@ -71,21 +71,46 @@ class GroupIntentScorer:
                 ),
             },
         ]
-        raw = await self.llm.complete(
-            messages,
-            max_tokens=100000,
-            model=self.settings.chad_intent_model,
-            timeout_seconds=self.settings.group_intent_timeout_seconds,
-        )
+        try:
+            raw = await self.llm.complete(
+                messages,
+                max_tokens=100000,
+                model=self.settings.chad_intent_model,
+                timeout_seconds=self.settings.chad_intent_timeout_seconds,
+                strict=True,
+            )
+        except ChadAIUnavailableError as exc:
+            score = self._fallback_score(message_text=message_text, bot_username=bot_username, replied_to_bot=replied_to_bot)
+            logger.warning(
+                "intent_score_fallback chat_id=%s reason=llm_unavailable score=%s error=%s message=%r",
+                chat_id,
+                score,
+                exc,
+                message_text,
+            )
+            return score
         score = self._parse_score(raw)
         logger.info(
             "intent_score chat_id=%s model=%s timeout=%.2f recent_count=%s score=%s current_message=%r raw=%r",
             chat_id,
             self.settings.chad_intent_model,
-            self.settings.group_intent_timeout_seconds,
+            self.settings.chad_intent_timeout_seconds,
             len(recent),
             score,
             message_text,
             raw,
         )
         return score
+
+    @staticmethod
+    def _fallback_score(*, message_text: str, bot_username: str | None, replied_to_bot: bool) -> int:
+        lowered = (message_text or "").lower()
+        if replied_to_bot:
+            return 10
+        if bot_username and f"@{bot_username.lower()}" in lowered:
+            return 9
+        if any(alias in lowered for alias in ("сайна", "saina", "бот", "ассистент")):
+            return 8
+        if lowered.strip().endswith("?"):
+            return 6
+        return 1

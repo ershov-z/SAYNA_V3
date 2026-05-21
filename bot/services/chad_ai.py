@@ -13,6 +13,10 @@ from bot.config import Settings
 logger = logging.getLogger(__name__)
 
 
+class ChadAIUnavailableError(RuntimeError):
+    """Raised when Chad AI request fails in strict mode."""
+
+
 class ChadAIClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -209,6 +213,7 @@ class ChadAIClient:
         model: str | None = None,
         timeout_seconds: float | None = None,
         images: list[str] | None = None,
+        strict: bool = False,
     ) -> str:
         model_name = model or self._settings.chad_ai_model
         logger.info(
@@ -240,6 +245,10 @@ class ChadAIClient:
                 type(exc).__name__,
                 exc,
             )
+            if strict:
+                raise ChadAIUnavailableError(
+                    f"Chad AI request failed: {type(exc).__name__}({exc!r})"
+                ) from exc
             return (
                 "Я на месте, но внешний AI сейчас недоступен.\n"
                 "Проверь `CHAD_AI_BASE_URL` (должен указывать на `/api/v1`) и API-ключ, потом повтори через минуту."

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     chad_ai_base_url: str = Field(default="https://ask.chadgpt.ru/api/v1", alias="CHAD_AI_BASE_URL")
     chad_ai_model: str = Field(default="gpt-5.4-thinking", alias="CHAD_AI_MODEL")
     chad_intent_model: str = Field(default="gpt-5-nano", alias="CHAD_INTENT_MODEL")
+    chad_intent_timeout_seconds: float = Field(default=6.0, alias="CHAD_INTENT_TIMEOUT_SECONDS")
     chad_decision_model: str = Field(default="gpt-5-nano", alias="CHAD_DECISION_MODEL")
     chad_decision_timeout_seconds: float = Field(default=1.8, alias="CHAD_DECISION_TIMEOUT_SECONDS")
     chad_decision_min_confidence: float = Field(default=0.35, alias="CHAD_DECISION_MIN_CONFIDENCE")
@@ -68,7 +69,7 @@ class Settings(BaseSettings):
     memory_rerank_candidate_limit: int = Field(default=8, alias="MEMORY_RERANK_CANDIDATE_LIMIT")
     memory_rerank_final_limit: int = Field(default=3, alias="MEMORY_RERANK_FINAL_LIMIT")
     memory_rerank_timeout_seconds: float = Field(default=1.8, alias="MEMORY_RERANK_TIMEOUT_SECONDS")
-    startup_selftest_enabled: bool = Field(default=True, alias="STARTUP_SELFTEST_ENABLED")
+    startup_selftest_enabled: bool = Field(default=False, alias="STARTUP_SELFTEST_ENABLED")
     startup_selftest_fail_fast: bool = Field(default=False, alias="STARTUP_SELFTEST_FAIL_FAST")
     startup_selftest_validator_model: str = Field(default="gpt-5.4-thinking", alias="STARTUP_SELFTEST_VALIDATOR_MODEL")
     startup_selftest_timeout_seconds: float = Field(default=18.0, alias="STARTUP_SELFTEST_TIMEOUT_SECONDS")
@@ -78,9 +79,18 @@ class Settings(BaseSettings):
     group_active_window_seconds: int = Field(default=420, alias="GROUP_ACTIVE_WINDOW_SECONDS")
     group_active_context_probability: float = Field(default=0.60, alias="GROUP_ACTIVE_CONTEXT_PROBABILITY")
     group_intent_score_threshold: int = Field(default=7, alias="GROUP_INTENT_SCORE_THRESHOLD")
-    group_intent_timeout_seconds: float = Field(default=1.4, alias="GROUP_INTENT_TIMEOUT_SECONDS")
     modular_orchestrator_enabled: bool = Field(default=False, alias="MODULAR_ORCHESTRATOR_ENABLED")
     max_reply_chars: int = Field(default=3200, alias="MAX_REPLY_CHARS")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_group_intent_timeout(cls, data: Any) -> Any:
+        # Backward compatibility for older env files.
+        if isinstance(data, dict):
+            if "CHAD_INTENT_TIMEOUT_SECONDS" not in data and "GROUP_INTENT_TIMEOUT_SECONDS" in data:
+                data = dict(data)
+                data["CHAD_INTENT_TIMEOUT_SECONDS"] = data["GROUP_INTENT_TIMEOUT_SECONDS"]
+        return data
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod

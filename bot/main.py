@@ -75,6 +75,54 @@ class ProcessLock:
             self._fp = None
 
 
+async def _run_startup_selftest_background(services) -> None:
+    try:
+        result = await services.startup_selftest.run()
+        if not result.ok:
+            logger.error("Startup self-test FAILED score=%s details=%s", result.score, result.details)
+        else:
+            logger.info("Startup self-test passed score=%s", result.score)
+    except Exception:
+        logger.exception("Startup self-test task crashed")
+
+
+async def _send_startup_announcement(services, bot: Bot, digest_chat_id: int) -> None:
+    startup_messages = [
+        {"role": "system", "content": services.soul.persona},
+        {"role": "system", "content": services.soul.module_style_prompt("chat")},
+        {
+            "role": "system",
+            "content": (
+                "Ты только что перезапустилась и возвращаешься в общий чат. "
+                "Сформулируй короткое живое сообщение в стиле персонажа: "
+                "1-2 предложения, дружелюбно, без технических деталей, без markdown."
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Напиши сообщение в общий чат о том, что ты снова на связи и готова помогать.",
+        },
+    ]
+    startup_raw = await services.llm.complete(startup_messages, timeout_seconds=10.0, max_tokens=400)
+    startup_text = services.soul.finalize_reply(startup_raw).strip()
+    if not startup_text:
+        startup_text = "Я снова на связи и готова помогать в общем чате."
+    try:
+        await bot.send_message(digest_chat_id, startup_text)
+    except TelegramBadRequest as exc:
+        if "can't parse entities" not in str(exc):
+            raise
+        logger.warning(
+            "startup_announcement_fallback_to_plain_text chat_id=%s text=%r error=%s",
+            digest_chat_id,
+            startup_text,
+            exc,
+        )
+        await bot.send_message(digest_chat_id, startup_text, parse_mode=None)
+    await services.memory.remember("assistant", user_id=0, chat_id=digest_chat_id, text=startup_text)
+    logger.info("startup_announcement_sent chat_id=%s", digest_chat_id)
+
+
 async def main() -> None:
     configure_logging()
     settings = get_settings()
@@ -91,6 +139,9 @@ async def main() -> None:
     services = build_services(settings, bot)
     dp.include_router(build_router(services))
 
+    # Always do only Google availability startup check by default.
+    await services.sheets.check_google_availability()
+
     seeded_entries = seed_if_needed(settings)
     if seeded_entries:
         logger.info("Initial memory seed completed entries=%s", seeded_entries)
@@ -101,51 +152,25 @@ async def main() -> None:
     scheduler = build_scheduler(settings, reminders, services.memory, services.digest)
     scheduler.start()
 
+    startup_tasks: list[asyncio.Task[None]] = []
+
     if settings.startup_selftest_enabled:
-        logger.info("Startup self-test enabled, running memory validation check")
-        result = await services.startup_selftest.run()
-        if not result.ok:
-            logger.error("Startup self-test FAILED score=%s details=%s", result.score, result.details)
-            if settings.startup_selftest_fail_fast:
+        if settings.startup_selftest_fail_fast:
+            logger.info("Startup self-test enabled (fail-fast), running blocking validation check")
+            result = await services.startup_selftest.run()
+            if not result.ok:
+                logger.error("Startup self-test FAILED score=%s details=%s", result.score, result.details)
                 raise RuntimeError(f"Startup self-test failed: {result.details}")
-        else:
             logger.info("Startup self-test passed score=%s", result.score)
+        else:
+            logger.info("Startup self-test enabled, scheduling background memory validation check")
+            startup_tasks.append(asyncio.create_task(_run_startup_selftest_background(services)))
 
     if settings.digest_chat_id != 0:
-        startup_messages = [
-            {"role": "system", "content": services.soul.persona},
-            {"role": "system", "content": services.soul.module_style_prompt("chat")},
-            {
-                "role": "system",
-                "content": (
-                    "Ты только что перезапустилась и возвращаешься в общий чат. "
-                    "Сформулируй короткое живое сообщение в стиле персонажа: "
-                    "1-2 предложения, дружелюбно, без технических деталей, без markdown."
-                ),
-            },
-            {
-                "role": "user",
-                "content": "Напиши сообщение в общий чат о том, что ты снова на связи и готова помогать.",
-            },
-        ]
-        startup_raw = await services.llm.complete(startup_messages, timeout_seconds=10.0, max_tokens=400)
-        startup_text = services.soul.finalize_reply(startup_raw).strip()
-        if not startup_text:
-            startup_text = "Я снова на связи и готова помогать в общем чате."
-        try:
-            await bot.send_message(settings.digest_chat_id, startup_text)
-        except TelegramBadRequest as exc:
-            if "can't parse entities" not in str(exc):
-                raise
-            logger.warning(
-                "startup_announcement_fallback_to_plain_text chat_id=%s text=%r error=%s",
-                settings.digest_chat_id,
-                startup_text,
-                exc,
-            )
-            await bot.send_message(settings.digest_chat_id, startup_text, parse_mode=None)
-        await services.memory.remember("assistant", user_id=0, chat_id=settings.digest_chat_id, text=startup_text)
-        logger.info("startup_announcement_sent chat_id=%s", settings.digest_chat_id)
+        logger.info("Scheduling startup announcement in background chat_id=%s", settings.digest_chat_id)
+        startup_tasks.append(
+            asyncio.create_task(_send_startup_announcement(services, bot, settings.digest_chat_id))
+        )
     else:
         logger.info("startup_announcement_skipped_missing_digest_chat_id")
 
@@ -153,6 +178,10 @@ async def main() -> None:
     try:
         await dp.start_polling(bot)
     finally:
+        for task in startup_tasks:
+            task.cancel()
+        if startup_tasks:
+            await asyncio.gather(*startup_tasks, return_exceptions=True)
         scheduler.shutdown(wait=False)
         await services.image.close()
         await services.llm.close()

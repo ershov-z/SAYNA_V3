@@ -97,6 +97,26 @@ class GoogleSheetsService:
             worksheet.update("A1", [headers], value_input_option="RAW")
         return worksheet
 
+    async def check_google_availability(self) -> bool:
+        """
+        Lightweight startup health-check for Google Sheets connectivity.
+        If check fails, switch to in-memory fallback mode for runtime stability.
+        """
+        if not self._enabled or self.orders_sheet is None:
+            logger.info("google_sheets_check_skipped enabled=%s", self._enabled)
+            return False
+        try:
+            await asyncio.to_thread(self.orders_sheet.row_values, 1)
+            logger.info("google_sheets_check_ok")
+            return True
+        except Exception as exc:
+            logger.warning("google_sheets_check_failed error=%s. Switching to in-memory fallback.", exc)
+            self._enabled = False
+            self.orders_sheet = None
+            self.todos_sheet = None
+            self.events_sheet = None
+            return False
+
     @staticmethod
     def _order_id_from_row_index(row_idx: int) -> str:
         return f"r{row_idx:04d}"
