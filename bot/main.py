@@ -103,7 +103,7 @@ async def _send_startup_announcement(services, bot: Bot, digest_chat_id: int) ->
             "content": "Напиши сообщение в общий чат о том, что ты снова на связи и готова помогать.",
         },
     ]
-    startup_raw = await services.llm.complete(startup_messages, timeout_seconds=10.0, max_tokens=400)
+    startup_raw = await services.llm.complete(startup_messages, timeout_seconds=10.0, max_tokens=2000)
     startup_text = services.soul.finalize_reply(startup_raw).strip()
     if not startup_text:
         startup_text = "Я снова на связи и готова помогать в общем чате."

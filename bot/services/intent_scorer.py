@@ -74,9 +74,10 @@ class GroupIntentScorer:
         try:
             raw = await self.llm.complete(
                 messages,
-                max_tokens=100000,
+                max_tokens=2000,
                 model=self.settings.chad_intent_model,
                 timeout_seconds=self.settings.chad_intent_timeout_seconds,
+                retry_on_timeout=1,
                 strict=True,
             )
         except ChadAIUnavailableError as exc:

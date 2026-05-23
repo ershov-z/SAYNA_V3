@@ -133,6 +133,8 @@ async def test_build_digest_adds_only_missing_facts_to_memory() -> None:
 
     result = await digest.build_digest(window_hours=24, trigger="manual")
 
+    assert "Блок по мастерской" in result.text
+    assert "Блок по чату" in result.text
     assert "Итог дня" in result.text
     assert result.facts_total == 2
     assert result.facts_added == 1
@@ -165,6 +167,8 @@ async def test_send_daily_digest_posts_to_digest_chat() -> None:
 
     assert bot.sent_messages
     assert bot.sent_messages[0][0] == settings.digest_chat_id
+    assert "Блок по мастерской" in bot.sent_messages[0][1]
+    assert "Блок по чату" in bot.sent_messages[0][1]
 
 
 def test_scheduler_registers_daily_digest_job() -> None:
@@ -174,3 +178,39 @@ def test_scheduler_registers_daily_digest_job() -> None:
     assert job is not None
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
+
+def test_digest_window_uses_23_to_23_boundaries() -> None:
+    settings = make_settings(TZ="Europe/Moscow", DAILY_DIGEST_HOUR=23, DAILY_DIGEST_MINUTE=0)
+    digest = DigestService(
+        settings=settings,
+        bot=FakeBot(),  # type: ignore[arg-type]
+        llm=FakeLLM([]),  # type: ignore[arg-type]
+        soul=SoulService(settings),
+        memory=FakeMemory(messages=[]),  # type: ignore[arg-type]
+        sheets=FakeSheets(),  # type: ignore[arg-type]
+    )
+    # 23:30 local time in Moscow (UTC+3) -> same-day 23:00 is window end.
+    now_utc = datetime(2026, 5, 21, 20, 30, tzinfo=timezone.utc)
+    start, end = digest._window_bounds(24, trigger="scheduled", now=now_utc)  # noqa: SLF001
+
+    assert end == datetime(2026, 5, 21, 20, 0, tzinfo=timezone.utc)
+    assert start == datetime(2026, 5, 20, 20, 0, tzinfo=timezone.utc)
+
+
+def test_manual_digest_window_uses_last_23_to_now() -> None:
+    settings = make_settings(TZ="Europe/Moscow", DAILY_DIGEST_HOUR=23, DAILY_DIGEST_MINUTE=0)
+    digest = DigestService(
+        settings=settings,
+        bot=FakeBot(),  # type: ignore[arg-type]
+        llm=FakeLLM([]),  # type: ignore[arg-type]
+        soul=SoulService(settings),
+        memory=FakeMemory(messages=[]),  # type: ignore[arg-type]
+        sheets=FakeSheets(),  # type: ignore[arg-type]
+    )
+    # 17:30 local time in Moscow (UTC+3) -> start at previous-day 23:00 local.
+    now_utc = datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc)
+    start, end = digest._window_bounds(24, trigger="manual", now=now_utc)  # noqa: SLF001
+
+    assert start == datetime(2026, 5, 20, 20, 0, tzinfo=timezone.utc)
+    assert end == now_utc

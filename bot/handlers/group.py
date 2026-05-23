@@ -128,6 +128,19 @@ def setup_group_handlers(services: ServiceContainer) -> Router:
             intent_text,
         )
 
+        async def remember_unanswered_group_message() -> None:
+            # When message is not routed to orchestrator, persist it explicitly
+            # so digest and memory search can still see full group context.
+            try:
+                await services.memory.remember("user", message.from_user.id, message.chat.id, intent_text)
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                logger.warning(
+                    "group_message_memory_skip chat_id=%s user_id=%s error=%s",
+                    message.chat.id,
+                    message.from_user.id,
+                    exc,
+                )
+
         bot_user = await services.bot.get_me()
         mentioned = _mentions_bot(intent_text, bot_user.username)
         replied_to_bot = bool(message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == bot_user.id)
@@ -163,6 +176,7 @@ def setup_group_handlers(services: ServiceContainer) -> Router:
 
         if now < cooldown_until and not (mentioned or replied_to_bot or direct_address or llm_addressed or image_generate_needed):
             logger.info("group_skip_cooldown chat_id=%s user_id=%s", message.chat.id, message.from_user.id)
+            await remember_unanswered_group_message()
             return
 
         should_answer = False
@@ -191,6 +205,7 @@ def setup_group_handlers(services: ServiceContainer) -> Router:
 
         if not should_answer:
             logger.info("group_skip_not_addressed chat_id=%s user_id=%s", message.chat.id, message.from_user.id)
+            await remember_unanswered_group_message()
             return
         logger.info("group_answer_decision chat_id=%s user_id=%s context_hint=%s", message.chat.id, message.from_user.id, context_hint)
 

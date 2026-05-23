@@ -213,6 +213,7 @@ class ChadAIClient:
         model: str | None = None,
         timeout_seconds: float | None = None,
         images: list[str] | None = None,
+        retry_on_timeout: int = 0,
         strict: bool = False,
     ) -> str:
         model_name = model or self._settings.chad_ai_model
@@ -224,31 +225,73 @@ class ChadAIClient:
             len(messages),
             self._first_user_snippet(messages),
         )
-        try:
-            if images:
-                logger.warning("images_are_not_supported_in_text_api images=%s", len(images))
-            endpoint, payload, headers = self._prepare_openai_compatible_payload(messages, max_tokens, model_name)
-            logger.info("chad_complete_http_request endpoint=%s payload=%s", endpoint, payload)
-            response = await self._client.post(endpoint, json=payload, headers=headers, timeout=timeout_seconds)
-            response.raise_for_status()
-            logger.info(
-                "chad_complete_network_ok endpoint=%s status=%s",
-                endpoint,
-                response.status_code,
-            )
-            data = response.json()
-        except httpx.HTTPError as exc:
-            logger.error(
-                "chad_ai request failed model=%s timeout=%s error=%s(%r)",
-                model_name,
-                timeout_seconds,
-                type(exc).__name__,
-                exc,
-            )
+        if images:
+            logger.warning("images_are_not_supported_in_text_api images=%s", len(images))
+        endpoint, payload, headers = self._prepare_openai_compatible_payload(messages, max_tokens, model_name)
+        attempts = max(1, int(retry_on_timeout) + 1)
+        data: dict[str, Any] | None = None
+        for attempt in range(1, attempts + 1):
+            request_timeout = timeout_seconds
+            if timeout_seconds is not None and attempt > 1:
+                request_timeout = timeout_seconds + 2.0 * (attempt - 1)
+            try:
+                logger.info(
+                    "chad_complete_http_request endpoint=%s attempt=%s/%s timeout=%s payload=%s",
+                    endpoint,
+                    attempt,
+                    attempts,
+                    request_timeout,
+                    payload,
+                )
+                response = await self._client.post(endpoint, json=payload, headers=headers, timeout=request_timeout)
+                response.raise_for_status()
+                logger.info(
+                    "chad_complete_network_ok endpoint=%s status=%s attempt=%s/%s",
+                    endpoint,
+                    response.status_code,
+                    attempt,
+                    attempts,
+                )
+                data = response.json()
+                break
+            except httpx.ReadTimeout as exc:
+                logger.warning(
+                    "chad_ai read timeout model=%s timeout=%s attempt=%s/%s error=%r",
+                    model_name,
+                    request_timeout,
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                if attempt < attempts:
+                    continue
+                if strict:
+                    raise ChadAIUnavailableError(
+                        f"Chad AI request failed: {type(exc).__name__}({exc!r})"
+                    ) from exc
+                return (
+                    "Я на месте, но внешний AI сейчас недоступен.\n"
+                    "Проверь `CHAD_AI_BASE_URL` (должен указывать на `/api/v1`) и API-ключ, потом повтори через минуту."
+                )
+            except httpx.HTTPError as exc:
+                logger.error(
+                    "chad_ai request failed model=%s timeout=%s error=%s(%r)",
+                    model_name,
+                    request_timeout,
+                    type(exc).__name__,
+                    exc,
+                )
+                if strict:
+                    raise ChadAIUnavailableError(
+                        f"Chad AI request failed: {type(exc).__name__}({exc!r})"
+                    ) from exc
+                return (
+                    "Я на месте, но внешний AI сейчас недоступен.\n"
+                    "Проверь `CHAD_AI_BASE_URL` (должен указывать на `/api/v1`) и API-ключ, потом повтори через минуту."
+                )
+        if data is None:
             if strict:
-                raise ChadAIUnavailableError(
-                    f"Chad AI request failed: {type(exc).__name__}({exc!r})"
-                ) from exc
+                raise ChadAIUnavailableError("Chad AI request failed: empty response after retries")
             return (
                 "Я на месте, но внешний AI сейчас недоступен.\n"
                 "Проверь `CHAD_AI_BASE_URL` (должен указывать на `/api/v1`) и API-ключ, потом повтори через минуту."
