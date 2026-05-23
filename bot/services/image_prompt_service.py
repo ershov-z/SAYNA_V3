@@ -68,6 +68,7 @@ class ImagePromptService:
         r"\bтвой\s+образ\b",
         r"\bпришли\s+(?:сво[её]|тво[её])\s+(?:фото|картин\w*|арт)\b",
         r"\bсво[ею]\s+фот\w*\b",
+        r"\bфот\w*\s+себя\b",
         r"\bселфи\b",
     )
     SAINA_PATTERNS = (
@@ -81,6 +82,7 @@ class ImagePromptService:
         r"\bкак\s+ты\s+выглядишь\b",
         r"\bсво[её]\s+селфи\b",
         r"\bсво[её]\s+фот\w*\b",
+        r"\bфот\w*\s+себя\b",
         r"\bселфи\b",
     )
     SIMPLE_PREFIX_PATTERNS = (
@@ -131,11 +133,15 @@ class ImagePromptService:
         return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in self.SAINA_PATTERNS)
 
     def classify_generation_mode(self, text: str) -> GenerationMode:
-        cleaned = self._clean_user_prompt(text)
-        if not cleaned or not self.is_image_request(cleaned):
+        raw = (text or "").strip()
+        if not raw:
             return self.GenerationMode.NONE
-        if self.is_self_description_request(cleaned) or self.is_saina_request(cleaned):
+        if self.is_self_description_request(raw) or self.is_saina_request(raw):
             return self.GenerationMode.SELF
+
+        cleaned = self._clean_user_prompt(text)
+        if not cleaned or not self.is_image_request(raw):
+            return self.GenerationMode.NONE
         return self.GenerationMode.SIMPLE
 
     def build_simple_prompt(self, user_text: str) -> str:
@@ -174,6 +180,6 @@ class ImagePromptService:
         excerpt = cleaned.replace("\n", " ").strip()
         if len(excerpt) > 160:
             excerpt = excerpt[:157].rstrip() + "..."
-        if self.classify_generation_mode(cleaned) is self.GenerationMode.SELF:
+        if self.classify_generation_mode(user_text) is self.GenerationMode.SELF:
             return f"Сгенерировала Сайну по запросу: {excerpt}"
         return f"Сгенерировала по запросу: {excerpt}"

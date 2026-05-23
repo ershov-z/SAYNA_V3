@@ -25,3 +25,9 @@ def test_image_prompt_service_classifies_simple_generation() -> None:
     service = ImagePromptService()
     text = "Сгенерируй комикс про боевых роботов"
     assert service.classify_generation_mode(text) is ImagePromptService.GenerationMode.SIMPLE
+
+
+def test_image_prompt_service_classifies_photo_of_self_as_self_generation() -> None:
+    service = ImagePromptService()
+    text = "Сайна, скинь фотку себя в виде гонщика формулы 1"
+    assert service.classify_generation_mode(text) is ImagePromptService.GenerationMode.SELF
