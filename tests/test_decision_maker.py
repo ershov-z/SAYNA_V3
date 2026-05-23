@@ -92,3 +92,25 @@ async def test_decision_maker_routes_digest_requests_to_secretary() -> None:
     )
     assert decision.module == ModuleName.SECRETARY
     assert decision.fallback_used is True
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_guard_downgrades_false_generation_to_chat() -> None:
+    settings = make_settings()
+    service = DecisionMakerService(settings, FakeLLM('{"module":"generation","confidence":0.95,"reason":"mistake"}'), SoulService(settings))
+    decision = await service.decide(
+        MessageEnvelope(user_id=1, chat_id=2, text="Эх, Сайна, если бы я как и ты могла выдумать себе сиськи", images=[]),
+    )
+    assert decision.module == ModuleName.CHAT
+    assert decision.fallback_used is True
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_guard_downgrades_false_secretary_to_chat() -> None:
+    settings = make_settings()
+    service = DecisionMakerService(settings, FakeLLM('{"module":"secretary","confidence":0.91,"reason":"mistake"}'), SoulService(settings))
+    decision = await service.decide(
+        MessageEnvelope(user_id=1, chat_id=2, text="Сайна, как настроение сегодня?", images=[]),
+    )
+    assert decision.module == ModuleName.CHAT
+    assert decision.fallback_used is True

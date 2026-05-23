@@ -126,7 +126,7 @@ class DecisionMakerService:
                     "всегда относятся к secretary. "
                     "Любые сообщения про дедлайн, статус выполнения, поручения, задачи и списки /orders /todos — это secretary. "
                     "Generation выбирай только когда пользователь явно хочет создать/сгенерировать изображение. "
-                    "Если сомневаешься между secretary и chat, выбирай secretary. "
+                "Если сомневаешься между secretary и chat, выбирай chat. "
                     "Сначала анализируй блок recent_chat (последние сообщения), "
                     "а memory_context используй только как дополнительный источник, если recent_chat недостаточен. "
                     "Верни только JSON формата "
@@ -169,6 +169,17 @@ class DecisionMakerService:
         fallback = False
         secretary_by_keyword = self._looks_like_secretary_intent(envelope.text)
         generation_by_keyword = self._looks_like_generation_intent(envelope.text)
+
+        # Guard against over-eager module routing from LLM output.
+        if module == ModuleName.GENERATION and not generation_by_keyword:
+            module = ModuleName.SECRETARY if secretary_by_keyword else ModuleName.CHAT
+            fallback = True
+            reason = reason or "generation_guard_to_non_generation"
+        elif module == ModuleName.SECRETARY and not secretary_by_keyword:
+            module = ModuleName.GENERATION if generation_by_keyword else ModuleName.CHAT
+            fallback = True
+            reason = reason or "secretary_guard_to_non_secretary"
+
         if module in {None, ModuleName.CHAT} and generation_by_keyword and not secretary_by_keyword:
             module = ModuleName.GENERATION
             fallback = True
