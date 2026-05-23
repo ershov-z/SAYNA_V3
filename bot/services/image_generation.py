@@ -4,7 +4,6 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,7 +11,6 @@ import httpx
 from bot.config import Settings
 from bot.services.chad_ai import ChadAIClient
 from bot.services.image_prompt_service import ImagePromptService
-from bot.utils.media import load_local_image_data_url
 
 logger = logging.getLogger(__name__)
 
@@ -91,56 +89,76 @@ class ChadImageService:
             caption = caption[:277].rstrip() + "..."
         return caption
 
-    def _load_self_reference_image(self) -> str:
+    def _self_reference_url(self) -> str:
         if not self.settings.chad_image_self_reference_enabled:
             return ""
-        reference_path = Path(self.settings.chad_image_self_reference_path)
-        try:
-            return load_local_image_data_url(reference_path)
-        except FileNotFoundError:
-            logger.error("self_reference_image_not_found path=%s", reference_path)
-            return ""
-        except OSError as exc:
-            logger.error("self_reference_image_load_failed path=%s error=%s", reference_path, exc)
-            return ""
+        reference_url = (self.settings.chad_image_self_reference_url or "").strip()
+        if reference_url.startswith(("http://", "https://")):
+            return reference_url
+        if reference_url:
+            logger.error("self_reference_url_invalid value=%s", reference_url)
+        return ""
 
-    async def _build_generation_inputs(self, user_text: str, user_images: list[str] | None) -> tuple[str, list[str], str, bool]:
+    def _prepare_user_images(self, user_images: list[str] | None) -> list[str]:
+        images = [image for image in (user_images or []) if isinstance(image, str) and image.strip()]
+        if self.settings.chad_image_extra_images_field != "image_urls":
+            return images
+        as_urls = [image for image in images if image.startswith(("http://", "https://"))]
+        dropped = len(images) - len(as_urls)
+        if dropped > 0:
+            logger.warning("image_payload_skipped_non_url_images skipped=%s field=image_urls", dropped)
+        return as_urls
+
+    async def _build_generation_inputs(
+        self,
+        user_text: str,
+        user_images: list[str] | None,
+    ) -> tuple[str, list[str], list[str], str, bool]:
         mode = self.prompt_service.classify_generation_mode(user_text)
         if mode is ImagePromptService.GenerationMode.NONE:
-            return "", [], "", False
+            return "", [], [], "", False
 
         prompt = ""
-        attachments = [image for image in (user_images or []) if isinstance(image, str) and image.strip()]
+        attachments = self._prepare_user_images(user_images)
+        reference_urls: list[str] = []
         requires_reference = False
         if mode is ImagePromptService.GenerationMode.SELF:
             prompt = self.prompt_service.build_self_prompt(user_text)
             requires_reference = self.settings.chad_image_self_reference_required
-            ref_image = self._load_self_reference_image()
-            if ref_image:
-                attachments = [ref_image, *attachments]
+            reference_url = self._self_reference_url()
+            if reference_url:
+                reference_urls = [reference_url]
             elif self.settings.chad_image_self_reference_enabled and requires_reference:
-                return "", [], "Не нашла reference-изображение Сайны для self-generation. Обнови путь в CHAD_IMAGE_SELF_REFERENCE_PATH.", True
+                return "", [], [], "Не нашла reference-ссылку Сайны для self-generation. Обнови CHAD_IMAGE_SELF_REFERENCE_URL.", True
         else:
             prompt = self.prompt_service.build_simple_prompt(user_text)
 
-        return prompt, attachments, "", True
+        return prompt, attachments, reference_urls, "", True
 
-    async def _imagine(self, prompt: str, extra_images: list[str] | None = None) -> tuple[str, str]:
+    async def _imagine(
+        self,
+        prompt: str,
+        extra_images: list[str] | None = None,
+        reference_urls: list[str] | None = None,
+    ) -> tuple[str, str]:
         endpoint = f"/api/public/{self.settings.chad_image_model}/imagine"
         payload = {
             "api_key": self.settings.chad_ai_api_key,
             "prompt": prompt,
             "aspect_ratio": self.settings.chad_image_aspect_ratio,
         }
+        if reference_urls:
+            payload["image_urls"] = reference_urls
         if extra_images:
             payload[self.settings.chad_image_extra_images_field] = extra_images
         logger.info(
-            "chad_image_imagine_request endpoint=%s model=%s prompt=%r images_count=%s image_field=%s",
+            "chad_image_imagine_request endpoint=%s model=%s prompt=%r images_count=%s image_field=%s refs_count=%s",
             endpoint,
             self.settings.chad_image_model,
             prompt[:500],
             len(extra_images or []),
             self.settings.chad_image_extra_images_field if extra_images else "-",
+            len(reference_urls or []),
         )
         response = await self._client.post(endpoint, json=payload)
         response.raise_for_status()
@@ -199,7 +217,7 @@ class ChadImageService:
         if not self.is_image_request(user_text):
             return ImageGenerationResult(handled=False)
 
-        prompt, attachments, build_error, handled = await self._build_generation_inputs(user_text, user_images)
+        prompt, attachments, reference_urls, build_error, handled = await self._build_generation_inputs(user_text, user_images)
         if not handled:
             return ImageGenerationResult(handled=False)
         if build_error:
@@ -213,7 +231,7 @@ class ChadImageService:
         prompt = self._fit_for_image_model(prompt)
 
         try:
-            content_id, imagine_error = await self._imagine(prompt, attachments)
+            content_id, imagine_error = await self._imagine(prompt, attachments, reference_urls)
             if imagine_error:
                 return ImageGenerationResult(handled=True, success=False, error_message=f"Не смогла запустить генерацию: {imagine_error}")
             if not content_id:

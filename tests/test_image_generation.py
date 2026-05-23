@@ -82,7 +82,7 @@ async def test_build_generation_inputs_for_simple_passes_user_images() -> None:
     )
     image_service = ChadImageService(settings, prompt_service=prompt_service, llm=FakeLLM("ok"))
     try:
-        prompt, attachments, build_error, handled = await image_service._build_generation_inputs(  # noqa: SLF001
+        prompt, attachments, reference_urls, build_error, handled = await image_service._build_generation_inputs(  # noqa: SLF001
             "Сгенерируй комикс",
             user_images=["data:image/jpeg;base64,user1"],
         )
@@ -92,16 +92,20 @@ async def test_build_generation_inputs_for_simple_passes_user_images() -> None:
     assert build_error == ""
     assert prompt == "комикс про роботов"
     assert attachments == ["data:image/jpeg;base64,user1"]
+    assert reference_urls == []
 
 
 @pytest.mark.asyncio
 async def test_build_generation_inputs_for_self_adds_reference_first() -> None:
-    settings = make_settings(CHAD_IMAGE_SELF_REFERENCE_ENABLED=True, CHAD_IMAGE_SELF_REFERENCE_REQUIRED=True)
+    settings = make_settings(
+        CHAD_IMAGE_SELF_REFERENCE_ENABLED=True,
+        CHAD_IMAGE_SELF_REFERENCE_REQUIRED=True,
+        CHAD_IMAGE_SELF_REFERENCE_URL="https://thumbsnap.com/i/cP46JG2a.jpg?0523",
+    )
     prompt_service = FakePromptService(ImagePromptService.GenerationMode.SELF, self_prompt="Селфи персонажа в клоунском гриме")
     image_service = ChadImageService(settings, prompt_service=prompt_service, llm=FakeLLM("ok"))
-    image_service._load_self_reference_image = lambda: "data:image/png;base64,saina-ref"  # noqa: SLF001
     try:
-        prompt, attachments, build_error, handled = await image_service._build_generation_inputs(  # noqa: SLF001
+        prompt, attachments, reference_urls, build_error, handled = await image_service._build_generation_inputs(  # noqa: SLF001
             "Сайна, скинь селфи",
             user_images=["data:image/jpeg;base64,user1"],
         )
@@ -110,23 +114,31 @@ async def test_build_generation_inputs_for_self_adds_reference_first() -> None:
     assert handled is True
     assert build_error == ""
     assert prompt == "Селфи персонажа в клоунском гриме"
-    assert attachments == ["data:image/png;base64,saina-ref", "data:image/jpeg;base64,user1"]
+    assert attachments == ["data:image/jpeg;base64,user1"]
+    assert reference_urls == ["https://thumbsnap.com/i/cP46JG2a.jpg?0523"]
 
 
 @pytest.mark.asyncio
 async def test_build_generation_inputs_for_self_fails_when_reference_required_but_missing() -> None:
-    settings = make_settings(CHAD_IMAGE_SELF_REFERENCE_ENABLED=True, CHAD_IMAGE_SELF_REFERENCE_REQUIRED=True)
+    settings = make_settings(
+        CHAD_IMAGE_SELF_REFERENCE_ENABLED=True,
+        CHAD_IMAGE_SELF_REFERENCE_REQUIRED=True,
+        CHAD_IMAGE_SELF_REFERENCE_URL="",
+    )
     prompt_service = FakePromptService(ImagePromptService.GenerationMode.SELF, self_prompt="Селфи персонажа")
     image_service = ChadImageService(settings, prompt_service=prompt_service, llm=FakeLLM("ok"))
-    image_service._load_self_reference_image = lambda: ""  # noqa: SLF001
     try:
-        prompt, attachments, build_error, handled = await image_service._build_generation_inputs("Сайна, селфи", user_images=[])  # noqa: SLF001
+        prompt, attachments, reference_urls, build_error, handled = await image_service._build_generation_inputs(  # noqa: SLF001
+            "Сайна, селфи",
+            user_images=[],
+        )
     finally:
         await image_service.close()
     assert handled is True
     assert prompt == ""
     assert attachments == []
-    assert "reference-изображение Сайны" in build_error
+    assert reference_urls == []
+    assert "reference-ссылку Сайны" in build_error
 
 
 @pytest.mark.asyncio
@@ -142,6 +154,20 @@ async def test_imagine_includes_extra_images_field_in_payload() -> None:
     assert fake_client.last_endpoint.endswith("/imagine")
     assert fake_client.last_json is not None
     assert fake_client.last_json["image_base64s"] == ["data:image/png;base64,a"]
+
+
+@pytest.mark.asyncio
+async def test_imagine_includes_reference_urls_in_payload() -> None:
+    settings = make_settings()
+    prompt_service = FakePromptService(ImagePromptService.GenerationMode.SIMPLE, simple_prompt="кот")
+    image_service = ChadImageService(settings, prompt_service=prompt_service, llm=FakeLLM("ok"))
+    fake_client = FakeHTTPClient({"status": "failed", "error_message": "upstream-error"})
+    image_service._client = fake_client  # noqa: SLF001
+    content_id, error = await image_service._imagine("prompt", [], ["https://thumbsnap.com/i/cP46JG2a.jpg?0523"])  # noqa: SLF001
+    assert content_id == ""
+    assert error == "upstream-error"
+    assert fake_client.last_json is not None
+    assert fake_client.last_json["image_urls"] == ["https://thumbsnap.com/i/cP46JG2a.jpg?0523"]
 
 
 def test_extract_image_url_from_success_payload_variants() -> None:
@@ -169,7 +195,7 @@ async def test_try_generate_uses_llm_caption_on_success() -> None:
     prompt_service = FakePromptService(ImagePromptService.GenerationMode.SIMPLE, simple_prompt="кот в очках")
     image_service = ChadImageService(settings, prompt_service=prompt_service, llm=FakeLLM("Получилось стильно, мне нравится этот вайб!"))
 
-    async def fake_imagine(prompt: str, extra_images=None):  # noqa: ANN001, ARG001
+    async def fake_imagine(prompt: str, extra_images=None, reference_urls=None):  # noqa: ANN001, ARG001
         return "cid-1", ""
 
     async def fake_check(content_id: str):  # noqa: ARG001
@@ -196,7 +222,7 @@ async def test_try_generate_falls_back_caption_when_llm_unavailable() -> None:
         llm=FakeLLM("Я на месте, но внешний AI сейчас недоступен."),
     )
 
-    async def fake_imagine(prompt: str, extra_images=None):  # noqa: ANN001, ARG001
+    async def fake_imagine(prompt: str, extra_images=None, reference_urls=None):  # noqa: ANN001, ARG001
         return "cid-2", ""
 
     async def fake_check(content_id: str):  # noqa: ARG001

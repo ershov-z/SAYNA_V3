@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     chad_image_intent_timeout_seconds: float = Field(default=1.2, alias="CHAD_IMAGE_INTENT_TIMEOUT_SECONDS")
     chad_image_intent_threshold: int = Field(default=7, alias="CHAD_IMAGE_INTENT_THRESHOLD")
     chad_image_extra_images_field: str = Field(default="image_base64s", alias="CHAD_IMAGE_EXTRA_IMAGES_FIELD")
-    chad_image_self_reference_path: str = Field(default="bot/assets/reference/saina.png", alias="CHAD_IMAGE_SELF_REFERENCE_PATH")
+    chad_image_self_reference_url: str = Field(
+        default="https://thumbsnap.com/i/cP46JG2a.jpg?0523",
+        alias="CHAD_IMAGE_SELF_REFERENCE_URL",
+    )
     chad_image_self_reference_enabled: bool = Field(default=True, alias="CHAD_IMAGE_SELF_REFERENCE_ENABLED")
     chad_image_self_reference_required: bool = Field(default=True, alias="CHAD_IMAGE_SELF_REFERENCE_REQUIRED")
 
