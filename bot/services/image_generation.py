@@ -161,7 +161,15 @@ class ChadImageService:
             len(reference_urls or []),
         )
         response = await self._client.post(endpoint, json=payload)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            error_body = (response.text or "").strip()
+            logger.error(
+                "chad_image_imagine_http_error endpoint=%s status=%s body=%r",
+                endpoint,
+                response.status_code,
+                error_body[:900],
+            )
+            return "", f"HTTP {response.status_code}: {error_body[:220]}"
         data = response.json()
         status = str(data.get("status", ""))
         if status == "failed":

@@ -158,6 +158,7 @@ class ImagePromptService:
             return ""
         context = self._strip_prefixes(cleaned, self.SELF_PREFIX_PATTERNS)
         context = re.sub(r"^[,.:;!?-]+\s*", "", context).strip()
+        context = re.sub(r"^(?:себя|себе)\b\s*", "", context, flags=re.IGNORECASE).strip()
         if not context:
             return "Селфи персонажа"
         lowered = context.lower()

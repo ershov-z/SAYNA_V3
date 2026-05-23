@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     chad_image_intent_threshold: int = Field(default=7, alias="CHAD_IMAGE_INTENT_THRESHOLD")
     chad_image_extra_images_field: str = Field(default="image_base64s", alias="CHAD_IMAGE_EXTRA_IMAGES_FIELD")
     chad_image_self_reference_url: str = Field(
-        default="https://thumbsnap.com/i/cP46JG2a.jpg?0523",
+        default="https://psv4.userapi.com/s/v1/d2/LAbuc_hM9hneLS3_mDHw5s1ME20FsXY2IyhxkOw5QUDTy1Z5eGahdEgKh6XjcQQ0AH0nPt9-nJJPTXbQe5yPl4C4riDtZ0DKz2ol3nd8-ff9R2Q0scmCXsV-Ce78egR2GSu5BHAZlrR2/ChatGPT_Image_May_23_2026_09_15_15_PM.png",
         alias="CHAD_IMAGE_SELF_REFERENCE_URL",
     )
     chad_image_self_reference_enabled: bool = Field(default=True, alias="CHAD_IMAGE_SELF_REFERENCE_ENABLED")

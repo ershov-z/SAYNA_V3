@@ -38,8 +38,10 @@ class FakeLLM:
 
 
 class FakeHTTPResponse:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict, *, status_code: int = 200, text: str = "") -> None:
         self._payload = payload
+        self.status_code = status_code
+        self.text = text
 
     def raise_for_status(self) -> None:
         return None
@@ -49,15 +51,17 @@ class FakeHTTPResponse:
 
 
 class FakeHTTPClient:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict, *, status_code: int = 200, text: str = "") -> None:
         self.payload = payload
+        self.status_code = status_code
+        self.text = text
         self.last_json = None
         self.last_endpoint = ""
 
     async def post(self, endpoint: str, json: dict):  # noqa: ANN001
         self.last_endpoint = endpoint
         self.last_json = json
-        return FakeHTTPResponse(self.payload)
+        return FakeHTTPResponse(self.payload, status_code=self.status_code, text=self.text)
 
     async def aclose(self) -> None:
         return None
@@ -168,6 +172,23 @@ async def test_imagine_includes_reference_urls_in_payload() -> None:
     assert error == "upstream-error"
     assert fake_client.last_json is not None
     assert fake_client.last_json["image_urls"] == ["https://thumbsnap.com/i/cP46JG2a.jpg?0523"]
+
+
+@pytest.mark.asyncio
+async def test_imagine_returns_http_error_with_response_body() -> None:
+    settings = make_settings()
+    prompt_service = FakePromptService(ImagePromptService.GenerationMode.SIMPLE, simple_prompt="кот")
+    image_service = ChadImageService(settings, prompt_service=prompt_service, llm=FakeLLM("ok"))
+    fake_client = FakeHTTPClient(
+        {"detail": "unprocessable"},
+        status_code=422,
+        text='{"detail":[{"loc":["body","image_urls"],"msg":"bad url"}]}',
+    )
+    image_service._client = fake_client  # noqa: SLF001
+    content_id, error = await image_service._imagine("prompt", [], ["https://bad.example/img.jpg"])  # noqa: SLF001
+    assert content_id == ""
+    assert error.startswith("HTTP 422:")
+    assert "bad url" in error
 
 
 def test_extract_image_url_from_success_payload_variants() -> None:

@@ -15,6 +15,12 @@ def test_image_prompt_service_builds_short_self_prompt() -> None:
     assert prompt == "Селфи персонажа в клоунском гриме"
 
 
+def test_image_prompt_service_builds_self_prompt_without_sebya_artifact() -> None:
+    service = ImagePromptService()
+    prompt = service.build_self_prompt("Сайна, сгенерируй изображение себя как будто ты гонщик формулы 1")
+    assert prompt == "Селфи персонажа как будто ты гонщик формулы 1"
+
+
 def test_image_prompt_service_extracts_simple_prompt() -> None:
     service = ImagePromptService()
     prompt = service.build_simple_prompt("Сайна, сгенерируй комикс про умамусуме")
