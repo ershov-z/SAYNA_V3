@@ -30,7 +30,7 @@ class GenerationModule:
         self.soul = soul
 
     async def handle(self, request: ModuleRequest) -> ModuleResponse:
-        result = await self.image.try_generate(request.envelope.text)
+        result = await self.image.try_generate(request.envelope.text, user_images=request.envelope.images)
         if result.handled and result.success:
             caption = self.soul.finalize_reply(result.caption or "Готово.")
             return ModuleResponse(module=ModuleName.GENERATION, text=caption, image_url=result.image_url)

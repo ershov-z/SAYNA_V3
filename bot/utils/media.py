@@ -4,6 +4,7 @@ import base64
 import io
 import logging
 import mimetypes
+from pathlib import Path
 
 from aiogram import Bot
 from aiogram.types import Message
@@ -17,6 +18,14 @@ MAX_IMAGES_PER_MESSAGE = 5
 def _data_url(payload: bytes, mime_type: str) -> str:
     encoded = base64.b64encode(payload).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def load_local_image_data_url(path: str | Path) -> str:
+    file_path = Path(path)
+    payload = file_path.read_bytes()
+    guessed_mime, _ = mimetypes.guess_type(file_path.name)
+    mime_type = guessed_mime or "image/png"
+    return _data_url(payload, mime_type)
 
 
 async def extract_message_images(bot: Bot, message: Message) -> list[str]:

@@ -3,21 +3,25 @@ from __future__ import annotations
 from bot.services.image_prompt_service import ImagePromptService
 
 
-def test_image_prompt_service_detects_saina_selfie_request() -> None:
+def test_image_prompt_service_classifies_self_generation() -> None:
     service = ImagePromptService()
     text = "Сайна, сгенерируй свою фотку для аватарки"
-    assert service.is_image_request(text) is True
-    assert service.is_saina_request(text) is True
+    assert service.classify_generation_mode(text) is ImagePromptService.GenerationMode.SELF
 
 
-def test_image_prompt_service_includes_saina_appearance_for_self_requests() -> None:
+def test_image_prompt_service_builds_short_self_prompt() -> None:
     service = ImagePromptService()
-    prompt = service.build_base_prompt("Сделай селфи Сайны в мастерской")
-    assert "Персонаж: Сайна" in prompt
-    assert "Сюжет/запрос пользователя" in prompt
+    prompt = service.build_self_prompt("Сайна, скинь свое селфи в клоунском гриме")
+    assert prompt == "Селфи персонажа в клоунском гриме"
 
 
-def test_image_prompt_service_keeps_non_saina_prompt_as_is() -> None:
+def test_image_prompt_service_extracts_simple_prompt() -> None:
     service = ImagePromptService()
-    prompt = service.build_base_prompt("Нарисуй красный плащ на манекене")
-    assert prompt == "Нарисуй красный плащ на манекене"
+    prompt = service.build_simple_prompt("Сайна, сгенерируй комикс про умамусуме")
+    assert prompt == "комикс про умамусуме"
+
+
+def test_image_prompt_service_classifies_simple_generation() -> None:
+    service = ImagePromptService()
+    text = "Сгенерируй комикс про боевых роботов"
+    assert service.classify_generation_mode(text) is ImagePromptService.GenerationMode.SIMPLE

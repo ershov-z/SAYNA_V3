@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ import httpx
 from bot.config import Settings
 from bot.services.chad_ai import ChadAIClient
 from bot.services.image_prompt_service import ImagePromptService
+from bot.utils.media import load_local_image_data_url
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +48,6 @@ class ChadImageService:
     def is_image_request(self, text: str) -> bool:
         return self.prompt_service.is_image_request(text)
 
-    @staticmethod
-    def _cleanup_llm_prompt(raw: str) -> str:
-        text = (raw or "").strip()
-        if text.startswith("```") and text.endswith("```"):
-            lines = text.splitlines()
-            if len(lines) >= 3:
-                text = "\n".join(lines[1:-1]).strip()
-        text = re.sub(r"^\s*(промпт|prompt)\s*:\s*", "", text, flags=re.IGNORECASE)
-        return text.strip()
-
     @classmethod
     def _fit_for_image_model(cls, prompt: str) -> str:
         compact = re.sub(r"\s+", " ", prompt or "").strip()
@@ -66,53 +58,90 @@ class ChadImageService:
         tail = compact[-300:].lstrip()
         return f"{head} ... {tail}"
 
-    async def _build_final_prompt(self, user_text: str) -> str:
-        base_prompt = self.prompt_service.build_base_prompt(user_text)
-        if not base_prompt:
-            return ""
-        if not self.prompt_service.is_saina_request(user_text):
-            return base_prompt
-
+    async def _build_generated_caption(self, user_text: str, image_prompt: str) -> str:
+        fallback = self.prompt_service.build_caption(user_text)
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "Ты редактор промптов для image-generation модели. "
-                    "Собери один финальный промпт для realistic/anime portrait generation. "
-                    "Сохраняй ключевую внешность Сайны и адаптируй сцену под запрос пользователя. "
-                    "Финальный промпт должен быть только на русском языке. "
-                    "Если встречаются англоязычные фрагменты, переведи их на русский без потери смысла. "
-                    "Верни только готовый промпт, без пояснений, без Markdown, без списка вариантов."
+                    "Ты Сайна, AI-ассистент мастерской. "
+                    "Сформируй короткий комментарий к уже сгенерированному изображению. "
+                    "Пиши только по-русски, дружелюбно, от первого лица. "
+                    "1-2 коротких предложения, без markdown, без списков, без кавычек вокруг ответа."
                 ),
             },
-            {"role": "user", "content": base_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Запрос пользователя: {user_text}\n"
+                    f"Промпт генерации: {image_prompt}\n"
+                    "Напиши мой комментарий к итоговой картинке."
+                ),
+            },
         ]
-        llm_text = await self.llm.complete(
-            messages,
-            max_tokens=10000,
-            model=self.settings.chad_image_prompt_model,
-            timeout_seconds=self.settings.chad_image_prompt_timeout_seconds,
-        )
-        cleaned = self._cleanup_llm_prompt(llm_text)
+        raw = await self.llm.complete(messages, max_tokens=220, timeout_seconds=6.0)
+        caption = re.sub(r"\s+", " ", (raw or "").strip())
         if (
-            not cleaned
-            or len(cleaned) < 30
-            or "не смог сформировать ответ" in cleaned.lower()
-            or "внешний ai сейчас недоступен" in cleaned.lower()
-            or "проверь `chad_ai_base_url`" in cleaned.lower()
+            not caption
+            or "внешний ai сейчас недоступен" in caption.lower()
+            or "не смог сформировать ответ" in caption.lower()
         ):
-            logger.warning("image_prompt_fallback_to_base_prompt raw=%r", llm_text[:220])
-            return base_prompt
-        return cleaned
+            return fallback
+        if len(caption) > 280:
+            caption = caption[:277].rstrip() + "..."
+        return caption
 
-    async def _imagine(self, prompt: str) -> tuple[str, str]:
+    def _load_self_reference_image(self) -> str:
+        if not self.settings.chad_image_self_reference_enabled:
+            return ""
+        reference_path = Path(self.settings.chad_image_self_reference_path)
+        try:
+            return load_local_image_data_url(reference_path)
+        except FileNotFoundError:
+            logger.error("self_reference_image_not_found path=%s", reference_path)
+            return ""
+        except OSError as exc:
+            logger.error("self_reference_image_load_failed path=%s error=%s", reference_path, exc)
+            return ""
+
+    async def _build_generation_inputs(self, user_text: str, user_images: list[str] | None) -> tuple[str, list[str], str, bool]:
+        mode = self.prompt_service.classify_generation_mode(user_text)
+        if mode is ImagePromptService.GenerationMode.NONE:
+            return "", [], "", False
+
+        prompt = ""
+        attachments = [image for image in (user_images or []) if isinstance(image, str) and image.strip()]
+        requires_reference = False
+        if mode is ImagePromptService.GenerationMode.SELF:
+            prompt = self.prompt_service.build_self_prompt(user_text)
+            requires_reference = self.settings.chad_image_self_reference_required
+            ref_image = self._load_self_reference_image()
+            if ref_image:
+                attachments = [ref_image, *attachments]
+            elif self.settings.chad_image_self_reference_enabled and requires_reference:
+                return "", [], "Не нашла reference-изображение Сайны для self-generation. Обнови путь в CHAD_IMAGE_SELF_REFERENCE_PATH.", True
+        else:
+            prompt = self.prompt_service.build_simple_prompt(user_text)
+
+        return prompt, attachments, "", True
+
+    async def _imagine(self, prompt: str, extra_images: list[str] | None = None) -> tuple[str, str]:
         endpoint = f"/api/public/{self.settings.chad_image_model}/imagine"
         payload = {
             "api_key": self.settings.chad_ai_api_key,
             "prompt": prompt,
             "aspect_ratio": self.settings.chad_image_aspect_ratio,
         }
-        logger.info("chad_image_imagine_request endpoint=%s model=%s prompt=%r", endpoint, self.settings.chad_image_model, prompt[:500])
+        if extra_images:
+            payload[self.settings.chad_image_extra_images_field] = extra_images
+        logger.info(
+            "chad_image_imagine_request endpoint=%s model=%s prompt=%r images_count=%s image_field=%s",
+            endpoint,
+            self.settings.chad_image_model,
+            prompt[:500],
+            len(extra_images or []),
+            self.settings.chad_image_extra_images_field if extra_images else "-",
+        )
         response = await self._client.post(endpoint, json=payload)
         response.raise_for_status()
         data = response.json()
@@ -166,11 +195,15 @@ class ChadImageService:
 
         return ""
 
-    async def try_generate(self, user_text: str) -> ImageGenerationResult:
+    async def try_generate(self, user_text: str, user_images: list[str] | None = None) -> ImageGenerationResult:
         if not self.is_image_request(user_text):
             return ImageGenerationResult(handled=False)
 
-        prompt = await self._build_final_prompt(user_text)
+        prompt, attachments, build_error, handled = await self._build_generation_inputs(user_text, user_images)
+        if not handled:
+            return ImageGenerationResult(handled=False)
+        if build_error:
+            return ImageGenerationResult(handled=True, success=False, error_message=build_error)
         if not prompt:
             return ImageGenerationResult(
                 handled=True,
@@ -180,7 +213,7 @@ class ChadImageService:
         prompt = self._fit_for_image_model(prompt)
 
         try:
-            content_id, imagine_error = await self._imagine(prompt)
+            content_id, imagine_error = await self._imagine(prompt, attachments)
             if imagine_error:
                 return ImageGenerationResult(handled=True, success=False, error_message=f"Не смогла запустить генерацию: {imagine_error}")
             if not content_id:
@@ -201,12 +234,13 @@ class ChadImageService:
                 if status in self._SUCCESS_STATUSES:
                     image_url = self._extract_image_url(status_payload)
                     if image_url:
+                        generated_caption = await self._build_generated_caption(user_text, prompt)
                         return ImageGenerationResult(
                             handled=True,
                             success=True,
                             image_url=image_url,
                             prompt=prompt,
-                            caption=self.prompt_service.build_caption(user_text),
+                            caption=generated_caption,
                         )
                     return ImageGenerationResult(handled=True, success=False, error_message="Картинка сгенерирована, но ссылка пустая.")
                 if status in self._FAILED_STATUSES:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 import re
 
 SAINA_APPEARANCE_PROMPT = """
@@ -35,6 +36,11 @@ SAINA_APPEARANCE_PROMPT = """
 
 
 class ImagePromptService:
+    class GenerationMode(StrEnum):
+        NONE = "none"
+        SIMPLE = "simple"
+        SELF = "self"
+
     IMAGE_TRIGGER_PATTERNS = (
         r"\bсгенер\w*",
         r"\bнарис\w*",
@@ -61,6 +67,7 @@ class ImagePromptService:
         r"\bтво[её]\s+лиц\w*\b",
         r"\bтвой\s+образ\b",
         r"\bпришли\s+(?:сво[её]|тво[её])\s+(?:фото|картин\w*|арт)\b",
+        r"\bсво[ею]\s+фот\w*\b",
         r"\bселфи\b",
     )
     SAINA_PATTERNS = (
@@ -69,25 +76,45 @@ class ImagePromptService:
         r"\bбот\w*\b",
         r"\bассистент\w*\b",
         r"\bсекретар\w*\b",
-        r"\bе[её]\s+(?:фото|картин\w*|арт)\b",
-        r"\bтеб[яе]\b",
-        r"\bты\b",
-        r"\bтвой\b",
-        r"\bтвоя\b",
-        r"\bтво[её]\b",
-        r"\bтвои\b",
-        r"\bсебя\b",
         r"\bпокажи\s+себя\b",
         r"\bнарисуй\s+себя\b",
         r"\bкак\s+ты\s+выглядишь\b",
+        r"\bсво[её]\s+селфи\b",
+        r"\bсво[её]\s+фот\w*\b",
         r"\bселфи\b",
     )
+    SIMPLE_PREFIX_PATTERNS = (
+        r"^\s*(?:ну\s+)?(?:пожалуйста[, ]+)?",
+        r"^\s*(?:сайна|saina)[,:\-]?\s*",
+        r"^\s*(?:сгенерируй|сгенерь|нарисуй|создай|сделай|пришли|скинь|покажи)\s+",
+        r"^\s*(?:мне\s+)?(?:картин\w*|изображен\w*|арт|фото|фотк\w*|селфи)\s+",
+    )
+    SELF_PREFIX_PATTERNS = (
+        r"^\s*(?:ну\s+)?(?:пожалуйста[, ]+)?",
+        r"^\s*(?:сайна|saina)[,:\-]?\s*",
+        r"^\s*(?:скинь|пришли|сделай|покажи|нарисуй|сгенерируй|сгенерь|создай)\s+",
+        r"^\s*(?:мне\s+)?(?:(?:сво[её]|тво[её])\s+)?(?:селфи|фото|фотк\w*|картин\w*|изображен\w*|арт)\s*",
+    )
+    _SELF_CONTEXT_PREPOSITIONS = ("в ", "во ", "на ", "с ", "со ", "под ", "без ", "для ", "как ", "у ")
 
     @staticmethod
     def _clean_user_prompt(text: str) -> str:
         prompt = text.strip()
         prompt = re.sub(r"^\s*(сайна[,:\-]?\s*)", "", prompt, flags=re.IGNORECASE)
         return prompt.strip()
+
+    @classmethod
+    def _strip_prefixes(cls, text: str, patterns: tuple[str, ...]) -> str:
+        value = text.strip()
+        changed = True
+        while changed and value:
+            changed = False
+            for pattern in patterns:
+                updated = re.sub(pattern, "", value, count=1, flags=re.IGNORECASE).strip()
+                if updated != value:
+                    value = updated
+                    changed = True
+        return value
 
     def is_image_request(self, text: str) -> bool:
         lowered = text.lower().strip()
@@ -103,18 +130,42 @@ class ImagePromptService:
         lowered = text.lower().strip()
         return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in self.SAINA_PATTERNS)
 
-    def build_base_prompt(self, user_text: str) -> str:
+    def classify_generation_mode(self, text: str) -> GenerationMode:
+        cleaned = self._clean_user_prompt(text)
+        if not cleaned or not self.is_image_request(cleaned):
+            return self.GenerationMode.NONE
+        if self.is_self_description_request(cleaned) or self.is_saina_request(cleaned):
+            return self.GenerationMode.SELF
+        return self.GenerationMode.SIMPLE
+
+    def build_simple_prompt(self, user_text: str) -> str:
         cleaned = self._clean_user_prompt(user_text)
         if not cleaned:
             return ""
-        if self.is_saina_request(cleaned):
-            return (
-                f"{SAINA_APPEARANCE_PROMPT}\n\n"
-                "Сюжет/запрос пользователя (адаптируй образ, позу, сцену и детали под это описание, "
-                "но сохраняй узнаваемость Сайны):\n"
-                f"{cleaned}"
-            )
-        return cleaned
+        prompt = self._strip_prefixes(cleaned, self.SIMPLE_PREFIX_PATTERNS)
+        prompt = re.sub(r"^[,.:;!?-]+\s*", "", prompt).strip()
+        return prompt or cleaned
+
+    def build_self_prompt(self, user_text: str) -> str:
+        cleaned = self._clean_user_prompt(user_text)
+        if not cleaned:
+            return ""
+        context = self._strip_prefixes(cleaned, self.SELF_PREFIX_PATTERNS)
+        context = re.sub(r"^[,.:;!?-]+\s*", "", context).strip()
+        if not context:
+            return "Селфи персонажа"
+        lowered = context.lower()
+        if lowered.startswith(self._SELF_CONTEXT_PREPOSITIONS):
+            return f"Селфи персонажа {context}"
+        return f"Селфи персонажа в {context}"
+
+    def build_base_prompt(self, user_text: str) -> str:
+        mode = self.classify_generation_mode(user_text)
+        if mode is self.GenerationMode.SELF:
+            return self.build_self_prompt(user_text)
+        if mode is self.GenerationMode.SIMPLE:
+            return self.build_simple_prompt(user_text)
+        return ""
 
     def build_caption(self, user_text: str) -> str:
         cleaned = self._clean_user_prompt(user_text)
@@ -123,6 +174,6 @@ class ImagePromptService:
         excerpt = cleaned.replace("\n", " ").strip()
         if len(excerpt) > 160:
             excerpt = excerpt[:157].rstrip() + "..."
-        if self.is_saina_request(cleaned):
+        if self.classify_generation_mode(cleaned) is self.GenerationMode.SELF:
             return f"Сгенерировала Сайну по запросу: {excerpt}"
         return f"Сгенерировала по запросу: {excerpt}"
