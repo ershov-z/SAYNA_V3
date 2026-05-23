@@ -87,3 +87,22 @@ async def test_image_prompt_builder_requires_russian_output_for_saina() -> None:
     system_message = llm.last_messages[0]["content"]
     assert "только на русском языке" in system_message
     assert "переведи их на русский" in system_message
+
+
+def test_extract_image_url_from_success_payload_variants() -> None:
+    payload_list = {"status": "success", "output": ["https://img.example/list.png"]}
+    payload_dict = {"status": "succeeded", "output": {"url": "https://img.example/dict.png"}}
+    payload_nested = {"status": "done", "result": {"image_url": "https://img.example/nested.png"}}
+    payload_missing = {"status": "completed", "output": []}
+
+    assert ChadImageService._extract_image_url(payload_list) == "https://img.example/list.png"  # noqa: SLF001
+    assert ChadImageService._extract_image_url(payload_dict) == "https://img.example/dict.png"  # noqa: SLF001
+    assert ChadImageService._extract_image_url(payload_nested) == "https://img.example/nested.png"  # noqa: SLF001
+    assert ChadImageService._extract_image_url(payload_missing) == ""  # noqa: SLF001
+
+
+def test_fit_for_image_model_limits_prompt_length() -> None:
+    long_prompt = ("Аниме портрет Сайны с деталями. " * 120).strip()
+    fitted = ChadImageService._fit_for_image_model(long_prompt)  # noqa: SLF001
+    assert len(fitted) <= ChadImageService._MAX_IMAGE_PROMPT_CHARS + 10  # noqa: SLF001
+    assert "..." in fitted

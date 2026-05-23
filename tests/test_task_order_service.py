@@ -13,6 +13,7 @@ class FakeSheets:
         self.closed_orders: list[str] = []
         self.progress_updates: list[tuple[str, int, str | None]] = []
         self.field_updates: list[tuple[str, dict[str, object]]] = []
+        self.added_orders: list[dict[str, object]] = []
         self.todo_reminded: list[str] = []
         self.added_todos: list[dict[str, object]] = []
         self.orders = [
@@ -49,7 +50,7 @@ class FakeSheets:
         progress_percent=0,
         story_points=0,
     ):
-        return {
+        payload = {
             "order_id": "ab12cd34",
             "title": title,
             "client": client,
@@ -62,6 +63,8 @@ class FakeSheets:
             "progress_percent": progress_percent,
             "story_points": story_points,
         }
+        self.added_orders.append(payload)
+        return payload
 
     async def update_order_progress(self, order_id, progress_percent, status=None):
         self.progress_updates.append((order_id, progress_percent, status))
@@ -214,6 +217,17 @@ async def test_create_order_from_text():
 
 
 @pytest.mark.asyncio
+async def test_create_order_from_text_with_colon_after_order_keyword():
+    service = TaskOrderService(FakeSheets())
+    res = await service.try_handle_command(
+        "Заказ: Похититель пламени ХСР сумма 60000 дедлайн 2026-08-03 клиент Джамиль",
+        from_user_id=1,
+    )
+    assert res.handled is True
+    assert "Записала заказ" in res.text
+
+
+@pytest.mark.asyncio
 async def test_create_order_from_flexible_text():
     service = TaskOrderService(FakeSheets())
     res = await service.try_handle_command(
@@ -222,6 +236,58 @@ async def test_create_order_from_flexible_text():
     )
     assert res.handled is True
     assert "Заказ добавлен" in res.text
+
+
+@pytest.mark.asyncio
+async def test_create_order_from_direct_address_with_colon_block():
+    service = TaskOrderService(FakeSheets())
+    res = await service.try_handle_command(
+        "Сайна, Заказ: Похититель пламени ХСР, сумма: 60000, дедлайн 2026-08-03, клиент Джамиль",
+        from_user_id=1,
+    )
+    assert res.handled is True
+    assert "заказ" in res.text.lower()
+    assert "не поймала точное изменение" not in res.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_create_requires_choice_and_creates_new_on_new_answer():
+    sheets = FakeSheets()
+    service = TaskOrderService(sheets)
+    first = await service.try_handle_command(
+        "заказ Стол сумма 25000 дедлайн 2026-06-15 клиент Иван",
+        from_user_id=1,
+    )
+    assert first.handled is True
+    assert "новый" in first.text.lower()
+    assert "старый" in first.text.lower()
+    assert sheets.added_orders == []
+
+    second = await service.try_handle_command("новый", from_user_id=1)
+    assert second.handled is True
+    assert "создала новый заказ" in second.text.lower()
+    assert len(sheets.added_orders) == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_create_updates_existing_on_old_answer():
+    sheets = FakeSheets()
+    service = TaskOrderService(sheets)
+    first = await service.try_handle_command(
+        "заказ Стол сумма 21000 дедлайн 2026-06-25 клиент Иван",
+        from_user_id=1,
+    )
+    assert first.handled is True
+    assert "новый" in first.text.lower()
+    assert "старый" in first.text.lower()
+
+    second = await service.try_handle_command("старый", from_user_id=1)
+    assert second.handled is True
+    assert "обновила существующий заказ" in second.text.lower()
+    assert sheets.field_updates
+    order_id, payload = sheets.field_updates[-1]
+    assert order_id == "ab12cd34"
+    assert payload["amount"] == 21000
 
 
 @pytest.mark.asyncio

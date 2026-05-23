@@ -26,6 +26,10 @@ class ImageGenerationResult:
 
 
 class ChadImageService:
+    _SUCCESS_STATUSES = {"completed", "success", "succeeded", "done", "ready"}
+    _FAILED_STATUSES = {"failed", "cancelled", "canceled", "error"}
+    _MAX_IMAGE_PROMPT_CHARS = 1400
+
     def __init__(self, settings: Settings, prompt_service: ImagePromptService, llm: ChadAIClient) -> None:
         self.settings = settings
         self.prompt_service = prompt_service
@@ -51,6 +55,16 @@ class ChadImageService:
                 text = "\n".join(lines[1:-1]).strip()
         text = re.sub(r"^\s*(промпт|prompt)\s*:\s*", "", text, flags=re.IGNORECASE)
         return text.strip()
+
+    @classmethod
+    def _fit_for_image_model(cls, prompt: str) -> str:
+        compact = re.sub(r"\s+", " ", prompt or "").strip()
+        if len(compact) <= cls._MAX_IMAGE_PROMPT_CHARS:
+            return compact
+        # Keep both opening style constraints and closing scene request.
+        head = compact[:1000].rstrip()
+        tail = compact[-300:].lstrip()
+        return f"{head} ... {tail}"
 
     async def _build_final_prompt(self, user_text: str) -> str:
         base_prompt = self.prompt_service.build_base_prompt(user_text)
@@ -113,6 +127,45 @@ class ChadImageService:
         response.raise_for_status()
         return response.json()
 
+    @staticmethod
+    def _extract_image_url(status_payload: dict[str, Any]) -> str:
+        output = status_payload.get("output")
+        if isinstance(output, list) and output:
+            first = output[0]
+            if isinstance(first, str):
+                return first.strip()
+            if isinstance(first, dict):
+                for key in ("url", "image_url", "src"):
+                    value = first.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+        if isinstance(output, dict):
+            for key in ("url", "image_url", "src"):
+                value = output.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        # Some providers return nested payloads in result/data.
+        for container_key in ("result", "data"):
+            container = status_payload.get(container_key)
+            if isinstance(container, dict):
+                for key in ("url", "image_url", "src"):
+                    value = container.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+                nested_output = container.get("output")
+                if isinstance(nested_output, list) and nested_output:
+                    first = nested_output[0]
+                    if isinstance(first, str) and first.strip():
+                        return first.strip()
+                    if isinstance(first, dict):
+                        for key in ("url", "image_url", "src"):
+                            value = first.get(key)
+                            if isinstance(value, str) and value.strip():
+                                return value.strip()
+
+        return ""
+
     async def try_generate(self, user_text: str) -> ImageGenerationResult:
         if not self.is_image_request(user_text):
             return ImageGenerationResult(handled=False)
@@ -124,6 +177,7 @@ class ChadImageService:
                 success=False,
                 error_message="Не вижу, что именно рисовать. Дай короткое описание сцены.",
             )
+        prompt = self._fit_for_image_model(prompt)
 
         try:
             content_id, imagine_error = await self._imagine(prompt)
@@ -138,20 +192,24 @@ class ChadImageService:
                 elapsed += self.settings.chad_image_check_interval_seconds
                 status_payload = await self._check(content_id)
                 status = str(status_payload.get("status", "")).lower()
-                if status == "completed":
-                    output = status_payload.get("output") or []
-                    if isinstance(output, list) and output:
-                        image_url = str(output[0])
-                        if image_url:
-                            return ImageGenerationResult(
-                                handled=True,
-                                success=True,
-                                image_url=image_url,
-                                prompt=prompt,
-                                caption=self.prompt_service.build_caption(user_text),
-                            )
+                logger.info(
+                    "chad_image_status content_id=%s status=%s elapsed=%.1fs",
+                    content_id,
+                    status or "unknown",
+                    elapsed,
+                )
+                if status in self._SUCCESS_STATUSES:
+                    image_url = self._extract_image_url(status_payload)
+                    if image_url:
+                        return ImageGenerationResult(
+                            handled=True,
+                            success=True,
+                            image_url=image_url,
+                            prompt=prompt,
+                            caption=self.prompt_service.build_caption(user_text),
+                        )
                     return ImageGenerationResult(handled=True, success=False, error_message="Картинка сгенерирована, но ссылка пустая.")
-                if status in {"failed", "cancelled"}:
+                if status in self._FAILED_STATUSES:
                     return ImageGenerationResult(
                         handled=True,
                         success=False,

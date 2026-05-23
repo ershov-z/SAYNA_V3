@@ -21,10 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ORDER_PATTERN = re.compile(
-    r"заказ\s+(?P<title>.+?)\s+сумма\s+(?P<amount>\d+(?:[.,]\d+)?)\s+дедлайн\s+(?P<date>\d{4}-\d{2}-\d{2})(?:\s+клиент\s+(?P<client>.+))?",
+    r"заказ(?:\s*[:\-])?\s+(?P<title>.+?)\s+сумма\s+(?P<amount>\d+(?:[.,]\d+)?)\s+дедлайн\s+(?P<date>\d{4}-\d{2}-\d{2})(?:\s+клиент\s+(?P<client>.+))?",
     flags=re.IGNORECASE,
 )
-ORDER_TITLE_PATTERN = re.compile(r"(?:взяли\s+)?заказ(?:\s+на)?\s+(?P<title>[^,\n]+)", flags=re.IGNORECASE)
+ORDER_TITLE_PATTERN = re.compile(
+    r"(?:взяли\s+)?заказ(?:\s+на)?(?:\s*[:\-])?\s+(?P<title>[^,\n]+)",
+    flags=re.IGNORECASE,
+)
 AMOUNT_PATTERN = re.compile(r"(?:сумма|цена|стоимость|за)\s*(?P<amount>\d+(?:[.,]\d+)?)", flags=re.IGNORECASE)
 CLIENT_PATTERN = re.compile(r"клиент[:\s]+(?P<client>[^\n,]+)", flags=re.IGNORECASE)
 RESPONSIBLE_CREATE_PATTERN = re.compile(r"ответствен\w*\s*[:=\-]?\s*(?P<value>[^\n,.;]+)", flags=re.IGNORECASE)
@@ -179,6 +182,19 @@ class PendingMutationPlan:
 
 
 @dataclass(slots=True)
+class PendingCreateDecision:
+    title: str
+    client: str
+    amount: float
+    due_date: datetime
+    responsible: str
+    materials_amount: float
+    progress_percent: int
+    story_points: int
+    candidate_order_ids: list[str]
+
+
+@dataclass(slots=True)
 class MutationPlanResult:
     preview: str
     action_type: str
@@ -252,6 +268,7 @@ class TaskOrderService:
         self.digest = digest
         self._last_order_by_user: dict[int, str] = {}
         self._pending_mutation_by_user: dict[int, PendingMutationPlan] = {}
+        self._pending_create_by_user: dict[int, PendingCreateDecision] = {}
         self._order_dialogue_by_user: dict[int, deque[list[str]]] = {}
         self._user_label_by_id: dict[int, str] = {}
         self._persona = soul.persona if soul is not None else Path("bot/prompts/persona.md").read_text(encoding="utf-8")
@@ -510,6 +527,7 @@ class TaskOrderService:
         self,
         normalized: str,
         from_user_id: int,
+        orders_snapshot: list[dict[str, object]],
         sender_display_name: str = "",
     ) -> ParseResult | None:
         lowered = normalized.lower()
@@ -543,19 +561,19 @@ class TaskOrderService:
         progress_percent = max(0, min(100, int(progress_hint.group("percent")))) if progress_hint else 0
 
         if title and due_date:
-            order = await self.sheets.add_order(
+            return await self._create_or_ask_duplicate_confirmation(
+                from_user_id=from_user_id,
                 title=title,
                 client=client,
                 amount=amount,
-                owner_user_id=from_user_id,
                 due_date=due_date,
                 responsible=responsible,
                 materials_amount=materials_amount or 0.0,
                 progress_percent=progress_percent,
                 story_points=story_points,
+                orders_snapshot=orders_snapshot,
+                success_message_template="Заказ добавлен: {order[title]} (ID {order[order_id]}).",
             )
-            self._last_order_by_user[from_user_id] = str(order["order_id"])
-            return ParseResult(True, f"Заказ добавлен: {order['title']} (ID {order['order_id']}).")
 
         missing = []
         if not title:
@@ -634,6 +652,11 @@ class TaskOrderService:
             )
         ):
             return False
+        if re.search(r"\bзаказ\s*[:\-]\s*", lowered) and (
+            ("дедлайн" in lowered or "срок" in lowered or "сдать" in lowered)
+            and ("сумма" in lowered or "цена" in lowered or "стоимость" in lowered or "клиент" in lowered)
+        ):
+            return True
         return any(
             token in lowered
             for token in (
@@ -687,6 +710,159 @@ class TaskOrderService:
     def _is_negative_confirmation(text: str) -> bool:
         lowered = text.strip().lower()
         return lowered in {"нет", "отмена", "отменить", "стоп", "не надо"}
+
+    @staticmethod
+    def _normalize_for_match(value: str) -> str:
+        return re.sub(r"[^a-zа-яё0-9]+", " ", str(value or "").lower()).strip()
+
+    def _find_create_duplicates(
+        self,
+        *,
+        title: str,
+        client: str,
+        orders: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        target_title = self._normalize_for_match(title)
+        target_client = self._normalize_for_match(client)
+        has_client = bool(target_client and target_client != "unknown")
+        if not target_title:
+            return []
+        exact_title = [
+            order
+            for order in orders
+            if self._normalize_for_match(str(order.get("title", ""))) == target_title
+        ]
+        if not exact_title:
+            return []
+        if not has_client:
+            return exact_title
+        same_client = [
+            order
+            for order in exact_title
+            if self._normalize_for_match(str(order.get("client", ""))) == target_client
+        ]
+        return same_client or exact_title
+
+    async def _create_or_ask_duplicate_confirmation(
+        self,
+        *,
+        from_user_id: int,
+        title: str,
+        client: str,
+        amount: float,
+        due_date: datetime,
+        responsible: str,
+        materials_amount: float,
+        progress_percent: int,
+        story_points: int,
+        orders_snapshot: list[dict[str, object]],
+        success_message_template: str,
+    ) -> ParseResult:
+        duplicates = self._find_create_duplicates(
+            title=title,
+            client=client,
+            orders=orders_snapshot,
+        )
+        if duplicates:
+            candidate_ids = [str(order.get("order_id", "")).lower() for order in duplicates if str(order.get("order_id", "")).strip()]
+            self._pending_create_by_user[from_user_id] = PendingCreateDecision(
+                title=title,
+                client=client,
+                amount=amount,
+                due_date=due_date,
+                responsible=responsible,
+                materials_amount=materials_amount,
+                progress_percent=progress_percent,
+                story_points=story_points,
+                candidate_order_ids=candidate_ids,
+            )
+            examples = "; ".join(self._format_order_line(order) for order in duplicates[:2])
+            return ParseResult(
+                True,
+                "Похоже, такой заказ уже есть. "
+                + ("Нашла: " + examples + ". " if examples else "")
+                + "Это новый заказ или обновляем существующий? Ответь `новый` или `старый`.",
+            )
+        order = await self.sheets.add_order(
+            title=title,
+            client=client,
+            amount=amount,
+            owner_user_id=from_user_id,
+            due_date=due_date,
+            responsible=responsible,
+            materials_amount=materials_amount,
+            progress_percent=progress_percent,
+            story_points=story_points,
+        )
+        self._last_order_by_user[from_user_id] = str(order["order_id"]).lower()
+        return ParseResult(
+            True,
+            success_message_template.format(
+                order=order,
+                due_date=due_date,
+                due_date_iso=due_date.date().isoformat(),
+                client=client,
+            ),
+        )
+
+    async def _resolve_pending_create_choice(
+        self,
+        *,
+        normalized: str,
+        from_user_id: int,
+        orders_snapshot: list[dict[str, object]],
+    ) -> ParseResult | None:
+        pending = self._pending_create_by_user.get(from_user_id)
+        if pending is None:
+            return None
+        lowered = normalized.lower().strip()
+        if not lowered:
+            return ParseResult(True, "Нужно решение: создаём `новый` заказ или обновляем `старый`?")
+        if lowered in {"новый", "новый заказ", "создай новый", "новый, создай"}:
+            self._pending_create_by_user.pop(from_user_id, None)
+            order = await self.sheets.add_order(
+                title=pending.title,
+                client=pending.client,
+                amount=pending.amount,
+                owner_user_id=from_user_id,
+                due_date=pending.due_date,
+                responsible=pending.responsible,
+                materials_amount=pending.materials_amount,
+                progress_percent=pending.progress_percent,
+                story_points=pending.story_points,
+            )
+            self._last_order_by_user[from_user_id] = str(order["order_id"]).lower()
+            return ParseResult(True, f"Ок, создала новый заказ {order['title']} (ID {order['order_id']}).")
+        if lowered in {"старый", "старый заказ", "существующий", "обнови существующий", "обнови старый"}:
+            candidate_ids = set(pending.candidate_order_ids)
+            candidates = [
+                order
+                for order in orders_snapshot
+                if str(order.get("order_id", "")).lower() in candidate_ids
+            ]
+            if not candidates:
+                self._pending_create_by_user.pop(from_user_id, None)
+                return ParseResult(True, "Не нашла старый заказ для обновления, давай заново опишем заказ.")
+            target = candidates[0]
+            target_id = str(target.get("order_id", "")).lower()
+            client_for_update = pending.client if pending.client.strip().lower() != "unknown" else None
+            ok = await self.sheets.update_order_fields(
+                target_id,
+                title=pending.title,
+                client=client_for_update,
+                responsible=pending.responsible or None,
+                amount=pending.amount,
+                materials_amount=pending.materials_amount,
+                progress_percent=pending.progress_percent,
+                story_points=pending.story_points,
+                due_date=pending.due_date,
+            )
+            self._pending_create_by_user.pop(from_user_id, None)
+            if not ok:
+                return ParseResult(True, f"Не получилось обновить существующий заказ {target_id}.")
+            self._last_order_by_user[from_user_id] = target_id
+            return ParseResult(True, f"Ок, обновила существующий заказ {target_id} по новым данным.")
+        return ParseResult(True, "Не поймала выбор. Напиши одним словом: `новый` или `старый`.")
 
     @staticmethod
     def _looks_like_order_query(normalized: str) -> bool:
@@ -1257,6 +1433,16 @@ class TaskOrderService:
         if sender_display_name:
             self._user_label_by_id[from_user_id] = sender_display_name
 
+        if from_user_id in self._pending_create_by_user:
+            pending_orders = await self.sheets.list_active_orders()
+            create_choice_result = await self._resolve_pending_create_choice(
+                normalized=normalized,
+                from_user_id=from_user_id,
+                orders_snapshot=pending_orders,
+            )
+            if create_choice_result is not None:
+                return create_choice_result
+
         if from_user_id in self._pending_mutation_by_user:
             if self._is_negative_confirmation(normalized):
                 self._pending_mutation_by_user.pop(from_user_id, None)
@@ -1288,15 +1474,21 @@ class TaskOrderService:
             amount = float(order_match.group("amount").replace(",", "."))
             due_date = datetime.fromisoformat(order_match.group("date"))
             client = (order_match.group("client") or "unknown").strip()
-            order = await self.sheets.add_order(
+            if not orders_snapshot:
+                orders_snapshot = await self.sheets.list_active_orders()
+            return await self._create_or_ask_duplicate_confirmation(
+                from_user_id=from_user_id,
                 title=title,
                 client=client,
                 amount=amount,
-                owner_user_id=from_user_id,
                 due_date=due_date,
+                responsible="",
+                materials_amount=0.0,
+                progress_percent=0,
+                story_points=0,
+                orders_snapshot=orders_snapshot,
+                success_message_template="Записала заказ {order[title]}: дедлайн {due_date_iso}, клиент {client}.",
             )
-            self._last_order_by_user[from_user_id] = str(order["order_id"]).lower()
-            return ParseResult(True, f"Записала заказ {order['title']}: дедлайн {due_date.date().isoformat()}, клиент {client}.")
 
         progress_match = PROGRESS_PATTERN.search(normalized)
         if progress_match:
@@ -1421,6 +1613,7 @@ class TaskOrderService:
         flex_result = await self._try_handle_flexible_order(
             normalized,
             from_user_id,
+            orders_snapshot,
             sender_display_name=sender_display_name,
         )
         if flex_result is not None:
